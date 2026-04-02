@@ -296,15 +296,25 @@ impl Scanner {
 
 impl fmt::Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match &self.literal {
+        if self.literal == LiteralType::NoneValue {
+            write!(f, "{:?} {}", self.ttype, self.lexeme)
+        } else {
+            write!(f, "{:?} {} {}", self.ttype, self.lexeme, self.literal)
+        }
+    }
+}
+
+impl fmt::Display for LiteralType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match &self {
             LiteralType::StringValue(value) => {
-                write!(f, "{:?} {} {}", self.ttype, self.lexeme, value)
+                write!(f, "{}", value)
             }
             LiteralType::NumberValue(value) => {
-                write!(f, "{:?} {} {}", self.ttype, self.lexeme, value)
+                write!(f, "{}", value)
             }
             LiteralType::NoneValue => {
-                write!(f, "{:?} {}", self.ttype, self.lexeme)
+                write!(f, "")
             }
         }
     }
