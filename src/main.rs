@@ -4,7 +4,7 @@ use std::env;
 use std::fs;
 use std::io::{self, Write};
 
-use scanner::{Scanner, Token};
+use scanner::Scanner;
 
 pub const EXIT_USAGE: i32 = 64;
 pub const EXIT_DATAERR: i32 = 65;
@@ -33,7 +33,7 @@ impl Lox {
         Lox { had_error: false }
     }
 
-    fn run_file(&self, script_path: &str) {
+    fn run_file(&mut self, script_path: &str) {
         match fs::read_to_string(script_path) {
             Ok(file_contents) => {
                 self.run(&file_contents);
@@ -74,12 +74,18 @@ impl Lox {
         }
     }
 
-    fn run(&self, source: &str) {
+    fn run(&mut self, source: &str) {
         let mut scanner = Scanner::new(source);
-        let tokens = scanner.scan_tokens();
+        let (tokens, errors) = scanner.scan_tokens();
 
         for token in tokens {
             println!("{:?}", token);
+        }
+
+        self.had_error = !errors.is_empty();
+
+        for err in errors {
+            eprintln!("{}", err);
         }
     }
 

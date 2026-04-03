@@ -84,10 +84,15 @@ impl Scanner {
         }
     }
 
-    pub fn scan_tokens(&mut self) -> &Vec<Token> {
+    pub fn scan_tokens(&mut self) -> (&Vec<Token>, Vec<String>) {
+        let mut errors: Vec<String> = Vec::new();
+
         while !self.is_at_end() {
             self.start = self.current;
-            self.scan_token();
+
+            if let Err(error_message) = self.scan_token() {
+                errors.push(error_message);
+            }
         }
 
         self.tokens.push(Token {
@@ -97,10 +102,10 @@ impl Scanner {
             line: self.line,
         });
 
-        &self.tokens
+        (&self.tokens, errors)
     }
 
-    fn scan_token(&mut self) {
+    fn scan_token(&mut self) -> Result<(), String> {
         let c = self.advance();
 
         match c {
@@ -167,8 +172,14 @@ impl Scanner {
             c if c.is_ascii_alphabetic() || c == '_' => {
                 self.identifier();
             }
-            _ => panic!("Unsupported character"), // TODO: we need to call Lox.error() here somehow or return an error value
-        }
+            _ => {
+                return Result::Err(
+                    format!("Unsupported character '{}' at line {}", c, self.line).to_string(),
+                );
+            }
+        };
+
+        Result::Ok(())
     }
 
     fn match_current_char(&mut self, expected: char) -> bool {
@@ -327,8 +338,9 @@ mod tests {
     #[test]
     fn test_single_character_tokens() {
         let mut scanner = Scanner::new("(){},.-+;*");
-        let tokens = scanner.scan_tokens();
+        let (tokens, errors) = scanner.scan_tokens();
 
+        assert!(errors.is_empty());
         assert_eq!(tokens.len(), 11); // 10 characters + EOF
         assert_eq!(tokens[0].ttype, TokenType::LeftParen);
         assert_eq!(tokens[1].ttype, TokenType::RightParen);
@@ -346,8 +358,9 @@ mod tests {
     #[test]
     fn test_multi_character_tokens() {
         let mut scanner = Scanner::new("!= ! == = <= < >= > / //");
-        let tokens = scanner.scan_tokens();
+        let (tokens, errors) = scanner.scan_tokens();
 
+        assert!(errors.is_empty());
         assert_eq!(tokens.len(), 10); // 9 tokens + EOF, comment // is ignored
         assert_eq!(tokens[0].ttype, TokenType::BangEqual);
         assert_eq!(tokens[0].lexeme, "!=");
@@ -368,8 +381,9 @@ mod tests {
     #[test]
     fn test_new_line() {
         let mut scanner = Scanner::new("\n\n\n");
-        let tokens = scanner.scan_tokens();
+        let (tokens, errors) = scanner.scan_tokens();
 
+        assert!(errors.is_empty());
         assert_eq!(tokens.len(), 1);
         assert_eq!(tokens[0].ttype, TokenType::Eof);
         assert_eq!(tokens[0].line, 4);
@@ -378,8 +392,9 @@ mod tests {
     #[test]
     fn test_string_literals() {
         let mut scanner = Scanner::new("\"abc\"");
-        let tokens = scanner.scan_tokens();
+        let (tokens, errors) = scanner.scan_tokens();
 
+        assert!(errors.is_empty());
         assert_eq!(tokens.len(), 2);
         assert_eq!(tokens[0].ttype, TokenType::String);
         assert_eq!(tokens[0].lexeme, "\"abc\"");
@@ -393,8 +408,9 @@ mod tests {
     #[test]
     fn test_keywords_identifiers_literals() {
         let mut scanner = Scanner::new("var foo = 123;");
-        let tokens = scanner.scan_tokens();
+        let (tokens, errors) = scanner.scan_tokens();
 
+        assert!(errors.is_empty());
         assert_eq!(tokens.len(), 6); // 5 tokens + EOF
 
         assert_eq!(tokens[0].ttype, TokenType::Var);
@@ -417,8 +433,9 @@ mod tests {
         let mut scanner = Scanner::new(
             "and class else false for fun if nil or print return super this true var while",
         );
-        let tokens = scanner.scan_tokens();
+        let (tokens, errors) = scanner.scan_tokens();
 
+        assert!(errors.is_empty());
         assert_eq!(tokens.len(), 17); // 16 keywords + EOF
         assert_eq!(tokens[0].ttype, TokenType::And);
         assert_eq!(tokens[1].ttype, TokenType::Class);
@@ -437,5 +454,13 @@ mod tests {
         assert_eq!(tokens[14].ttype, TokenType::Var);
         assert_eq!(tokens[15].ttype, TokenType::While);
         assert_eq!(tokens[16].ttype, TokenType::Eof);
+    }
+
+    #[test]
+    fn test_errors() {
+        let mut scanner = Scanner::new("and `");
+        let (tokens, errors) = scanner.scan_tokens();
+        assert_eq!(errors.is_empty(), false);
+        assert_eq!(tokens.len(), 2);
     }
 }
