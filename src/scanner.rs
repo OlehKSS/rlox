@@ -8,7 +8,7 @@ pub struct Scanner {
     line: usize,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Token {
     pub ttype: TokenType,
     pub lexeme: String,
@@ -16,7 +16,7 @@ pub struct Token {
     pub line: usize,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum TokenType {
     // Single character tokens
     LeftParen,
@@ -66,10 +66,11 @@ pub enum TokenType {
     Eof,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum LiteralType {
     StringValue(String),
     NumberValue(f64),
+    BoolValue(bool),
     NoneValue,
 }
 
@@ -322,6 +323,9 @@ impl fmt::Display for LiteralType {
                 write!(f, "{}", value)
             }
             LiteralType::NumberValue(value) => {
+                write!(f, "{}", value)
+            }
+            LiteralType::BoolValue(value) => {
                 write!(f, "{}", value)
             }
             LiteralType::NoneValue => {

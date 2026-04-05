@@ -1,9 +1,11 @@
+mod parser;
 mod scanner;
 
 use std::env;
 use std::fs;
 use std::io::{self, Write};
 
+use parser::Parser;
 use scanner::Scanner;
 
 pub const EXIT_USAGE: i32 = 64;
@@ -78,15 +80,19 @@ impl Lox {
         let mut scanner = Scanner::new(source);
         let (tokens, errors) = scanner.scan_tokens();
 
-        for token in tokens {
-            println!("{:?}", token);
+        if !errors.is_empty() {
+            self.had_error = true;
+            for err in errors {
+                eprintln!("{}", err);
+            }
+            return;
         }
 
-        self.had_error = !errors.is_empty();
-
-        for err in errors {
-            eprintln!("{}", err);
-        }
+        let mut parser = Parser::new(tokens.clone());
+        match parser.parse() {
+            Result::Ok(ptree) => println!("{}", ptree.to_string()),
+            Result::Err(msg) => eprintln!("{}", msg),
+        };
     }
 
     fn error(&mut self, line: i64, message: &str) {
