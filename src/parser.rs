@@ -1,6 +1,6 @@
 use core::fmt;
 
-use super::scanner::{LiteralType, Scanner, Token, TokenType};
+use super::scanner::{LiteralType, Token, TokenType};
 
 pub enum Expr {
     Binary {

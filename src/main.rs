@@ -1,3 +1,4 @@
+mod interpreter;
 mod parser;
 mod scanner;
 
@@ -5,6 +6,7 @@ use std::env;
 use std::fs;
 use std::io::{self, Write};
 
+use interpreter::interpret;
 use parser::Parser;
 use scanner::Scanner;
 
@@ -28,11 +30,15 @@ fn main() {
 
 struct Lox {
     had_error: bool,
+    had_runtime_error: bool,
 }
 
 impl Lox {
     fn new() -> Self {
-        Lox { had_error: false }
+        Lox {
+            had_error: false,
+            had_runtime_error: false,
+        }
     }
 
     fn run_file(&mut self, script_path: &str) {
@@ -42,6 +48,9 @@ impl Lox {
 
                 if self.had_error {
                     std::process::exit(EXIT_DATAERR);
+                }
+                if self.had_runtime_error {
+                    std::process::exit(EXIT_SOFTWARE);
                 }
             }
             Err(error) => {
@@ -89,10 +98,14 @@ impl Lox {
         }
 
         let mut parser = Parser::new(tokens.clone());
-        match parser.parse() {
-            Result::Ok(ptree) => println!("{}", ptree.to_string()),
-            Result::Err(msg) => eprintln!("{}", msg),
-        };
+        let parse_result = parser.parse();
+
+        if let Result::Err(emsg) = parse_result {
+            eprintln!("{}", emsg);
+            return;
+        }
+
+        interpret(&parse_result.unwrap());
     }
 
     fn error(&mut self, line: i64, message: &str) {
