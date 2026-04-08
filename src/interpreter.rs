@@ -1,15 +1,40 @@
-use super::parser::Expr;
+use super::parser::{Expr, Stmt};
 use super::scanner::{LiteralType, Token, TokenType};
 
 type LoxValue = LiteralType;
 
-pub fn interpret(expression: &Expr) {
-    let result = evaluate(expression);
+pub fn interpret(statements: &Vec<Stmt>) {
+    for stmt in statements {
+        let mut runtime_error = String::new();
 
-    match result {
-        Result::Ok(value) => println!("{}", stringify(&value)),
-        Result::Err(emsg) => eprintln!("{}", emsg),
+        match &stmt {
+            Stmt::Expression { expression } => 
+            {
+                let res = evaluate(expression);
+
+                if let Result::Err(emsg) = res {
+                    runtime_error = emsg;
+                }
+            },
+            Stmt::Print { expression } => {
+                let res = print_statement(expression);
+
+                if let Result::Err(emsg) = res {
+                    runtime_error = emsg;
+                }
+            },
+        };
+
+        if !runtime_error.is_empty() {
+            std::eprintln!("Runtime error: {}", runtime_error);
+        }
     }
+}
+
+fn print_statement(expr: &Expr) -> Result<(), String> {
+    let value = evaluate(expr)?;
+    std::println!("{}", stringify(&value));
+    Result::Ok(())
 }
 
 fn stringify(lox_value: &LoxValue) -> String {

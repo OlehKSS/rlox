@@ -2,6 +2,17 @@ use core::fmt;
 
 use super::scanner::{LiteralType, Token, TokenType};
 
+#[derive(Debug, Clone)]
+pub enum Stmt {
+    Expression {
+        expression: Box<Expr>,
+    },
+    Print {
+        expression: Box<Expr>,
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum Expr {
     Binary {
         left: Box<Expr>,
@@ -66,6 +77,10 @@ fn parenthesize(name: &str, exprs: &[&Expr]) -> String {
     out
 }
 
+// program → statement* EOF ;
+// statement → exprStmt | printStmt ;
+// exprStmt → expression ";" ;
+// printStmt → "print" expression ";" ;
 // expression → equality ;
 // equality   → comparison ( ( "!=" | "==" ) comparison )* ;
 // comparison → term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
@@ -86,8 +101,44 @@ impl Parser {
         }
     }
 
-    pub fn parse(&mut self) -> Result<Expr, String> {
-        self.expression()
+    pub fn parse(&mut self) -> Result<Vec<Stmt>, Vec<String>> {
+        let mut statements: Vec<Stmt> = Vec::new();
+        let mut error_messages: Vec<String> = Vec::new();
+
+        while !self.is_at_end() {
+            match &self.statement() {
+                Result::Ok(stmt) => statements.push(stmt.clone()),
+                Result::Err(emsg) => error_messages.push(emsg.clone()),
+            }
+        }
+
+        if error_messages.is_empty() {
+            Result::Ok(statements)
+        } else {
+            Result::Err(error_messages)
+        }
+    }
+
+    fn statement(&mut self) -> Result<Stmt, String> {
+        if self.match_token_type(&[TokenType::Print]) {
+            return self.print_statement();
+        }
+
+        self.expression_statment()
+    }
+
+    fn print_statement(&mut self) -> Result<Stmt, String> {
+        let expr=  self.expression()?;
+        self.consume(TokenType::Semicolon, "Expected ';' after value.")?;
+        
+        Result::Ok(Stmt::Print { expression: Box::new(expr) })
+    }
+
+    fn expression_statment(&mut self) -> Result<Stmt, String> {
+        let expr = self.expression()?;
+        self.consume(TokenType::Semicolon, "Expected ';' after expression.")?;
+
+        Result::Ok(Stmt::Expression { expression: Box::new(expr) })
     }
 
     fn expression(&mut self) -> Result<Expr, String> {
@@ -205,7 +256,8 @@ impl Parser {
             });
         }
 
-        Result::Err(self.error(&format!("Unexpected primary token {:?}", self.peek().ttype)))
+        let token_type = self.advance().ttype;
+        Result::Err(self.error(&format!("Unexpected primary token {:?}", token_type)))
     }
 
     fn match_token_type(&mut self, token_types: &[TokenType]) -> bool {
@@ -227,9 +279,9 @@ impl Parser {
         self.peek().ttype == token_type
     }
 
-    fn consume(&self, token_type: TokenType, message: &str) -> Result<(), String> {
+    fn consume(&mut self, token_type: TokenType, message: &str) -> Result<&Token, String> {
         if self.check(token_type) {
-            return Result::Ok(());
+            return Result::Ok(&self.advance());
         }
 
         Result::Err(self.error(message))

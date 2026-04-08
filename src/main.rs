@@ -100,8 +100,10 @@ impl Lox {
         let mut parser = Parser::new(tokens.clone());
         let parse_result = parser.parse();
 
-        if let Result::Err(emsg) = parse_result {
-            eprintln!("{}", emsg);
+        if let Result::Err(error_messages) = parse_result {
+            for emsg in &error_messages{
+                eprintln!("{}", emsg);
+            }
             return;
         }
 
