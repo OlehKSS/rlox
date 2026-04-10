@@ -9,7 +9,11 @@ pub enum Stmt {
     },
     Print {
         expression: Box<Expr>,
-    }
+    },
+    Var {
+        name: Token,
+        initializer: Option<Box<Expr>>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -28,6 +32,9 @@ pub enum Expr {
     Unary {
         right: Box<Expr>,
         operator: Token,
+    },
+    Variable {
+        name: Token,
     },
 }
 
@@ -57,6 +64,9 @@ impl fmt::Display for Expr {
                 let subexpr = parenthesize(&operator.lexeme, &[&right]);
                 write!(f, "{}", subexpr)
             }
+            Expr::Variable { name } => {
+                write!(f, "var {}", name.lexeme)
+            }
         }
     }
 }
@@ -77,7 +87,9 @@ fn parenthesize(name: &str, exprs: &[&Expr]) -> String {
     out
 }
 
-// program → statement* EOF ;
+// program → declaration* EOF ;
+// declaration → varDecl | statement ;
+// varDecl → "var" IDENTIFIER ( "=" expression )? ";" ;
 // statement → exprStmt | printStmt ;
 // exprStmt → expression ";" ;
 // printStmt → "print" expression ";" ;
@@ -87,7 +99,7 @@ fn parenthesize(name: &str, exprs: &[&Expr]) -> String {
 // term       → factor ( ( "-" | "+" ) factor )* ;
 // factor     → unary ( ( "/" | "*" ) unary )* ;
 // unary      → ( "!" | "-" ) unary | primary ;
-// primary    → NUMBER | STRING | "true" | "false" | "nil" | "(" expression ")" ;
+// primary    → NUMBER | STRING | "true" | "false" | "nil" | "(" expression ")" | IDENTIFIER ;
 pub struct Parser {
     tokens: Vec<Token>,
     current: usize,
@@ -106,7 +118,7 @@ impl Parser {
         let mut error_messages: Vec<String> = Vec::new();
 
         while !self.is_at_end() {
-            match &self.statement() {
+            match &self.declaration() {
                 Result::Ok(stmt) => statements.push(stmt.clone()),
                 Result::Err(emsg) => error_messages.push(emsg.clone()),
             }
@@ -119,6 +131,36 @@ impl Parser {
         }
     }
 
+    fn declaration(&mut self) -> Result<Stmt, String> {
+        if self.match_token_type(&[TokenType::Var]) {
+            return self.var_declaration();
+        }
+
+        self.statement()
+        // TODO: synchronize() when errors happen
+    }
+
+    fn var_declaration(&mut self) -> Result<Stmt, String> {
+        let name = self
+            .consume(TokenType::Identifier, "Expected variable name.")?
+            .clone();
+        let mut initializer = Option::None;
+
+        if self.match_token_type(&[TokenType::Equal]) {
+            let expr = self.expression()?;
+            initializer = Option::Some(Box::new(expr));
+        }
+
+        self.consume(
+            TokenType::Semicolon,
+            "Expected ';' after variable declaration.",
+        )?;
+        return Result::Ok(Stmt::Var {
+            name: name,
+            initializer: initializer,
+        });
+    }
+
     fn statement(&mut self) -> Result<Stmt, String> {
         if self.match_token_type(&[TokenType::Print]) {
             return self.print_statement();
@@ -128,17 +170,21 @@ impl Parser {
     }
 
     fn print_statement(&mut self) -> Result<Stmt, String> {
-        let expr=  self.expression()?;
+        let expr = self.expression()?;
         self.consume(TokenType::Semicolon, "Expected ';' after value.")?;
-        
-        Result::Ok(Stmt::Print { expression: Box::new(expr) })
+
+        Result::Ok(Stmt::Print {
+            expression: Box::new(expr),
+        })
     }
 
     fn expression_statment(&mut self) -> Result<Stmt, String> {
         let expr = self.expression()?;
         self.consume(TokenType::Semicolon, "Expected ';' after expression.")?;
 
-        Result::Ok(Stmt::Expression { expression: Box::new(expr) })
+        Result::Ok(Stmt::Expression {
+            expression: Box::new(expr),
+        })
     }
 
     fn expression(&mut self) -> Result<Expr, String> {
@@ -246,6 +292,11 @@ impl Parser {
         if self.match_token_type(&[TokenType::Number, TokenType::String]) {
             return Result::Ok(Expr::Literal {
                 value: self.previous().literal.clone(),
+            });
+        }
+        if self.match_token_type(&[TokenType::Identifier]) {
+            return Result::Ok(Expr::Variable {
+                name: self.previous().clone(),
             });
         }
         if self.match_token_type(&[TokenType::LeftParen]) {

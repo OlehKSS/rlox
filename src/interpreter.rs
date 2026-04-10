@@ -1,143 +1,179 @@
+use super::environment::Environment;
 use super::parser::{Expr, Stmt};
 use super::scanner::{LiteralType, Token, TokenType};
 
 type LoxValue = LiteralType;
 
-pub fn interpret(statements: &Vec<Stmt>) {
-    for stmt in statements {
-        let mut runtime_error = String::new();
+pub struct Interpreter {
+    environment: Environment,
+}
 
-        match &stmt {
-            Stmt::Expression { expression } => 
-            {
-                let res = evaluate(expression);
-
-                if let Result::Err(emsg) = res {
-                    runtime_error = emsg;
-                }
-            },
-            Stmt::Print { expression } => {
-                let res = print_statement(expression);
-
-                if let Result::Err(emsg) = res {
-                    runtime_error = emsg;
-                }
-            },
-        };
-
-        if !runtime_error.is_empty() {
-            std::eprintln!("Runtime error: {}", runtime_error);
+impl Interpreter {
+    pub fn new() -> Self {
+        Interpreter {
+            environment: Environment::new(),
         }
     }
-}
 
-fn print_statement(expr: &Expr) -> Result<(), String> {
-    let value = evaluate(expr)?;
-    std::println!("{}", stringify(&value));
-    Result::Ok(())
-}
+    pub fn interpret(&mut self, statements: &Vec<Stmt>) {
+        for stmt in statements {
+            let mut runtime_error = String::new();
 
-fn stringify(lox_value: &LoxValue) -> String {
-    match lox_value {
-        LoxValue::NoneValue => "nil".to_string(),
-        LoxValue::NumberValue(value) => {
-            let mut text = value.to_string();
-            if text.ends_with(".0") {
-                text = text[0..text.len() - 2].to_string()
+            match &stmt {
+                Stmt::Expression { expression } => {
+                    let res = self.evaluate(expression);
+
+                    if let Result::Err(emsg) = res {
+                        runtime_error = emsg;
+                    }
+                }
+                Stmt::Print { expression } => {
+                    let res = self.print_statement(expression);
+
+                    if let Result::Err(emsg) = res {
+                        runtime_error = emsg;
+                    }
+                }
+                Stmt::Var { name, initializer } => {
+                    let mut value = LiteralType::NoneValue;
+                    if let Option::Some(expr) = initializer {
+                        let res = self.evaluate(expr);
+
+                        match res {
+                            Result::Ok(expr_value) => {
+                                value = expr_value;
+                            }
+                            Result::Err(emsg) => {
+                                runtime_error = emsg;
+                                continue;
+                            }
+                        };
+                    }
+
+                    self.environment.define(&name.lexeme, &value);
+                }
+            };
+
+            if !runtime_error.is_empty() {
+                std::eprintln!("Runtime error: {}", runtime_error);
             }
-            return text;
         }
-        LoxValue::BoolValue(value) => value.to_string(),
-        LoxValue::StringValue(value) => value.clone(),
     }
-}
 
-fn evaluate_unary(right: &Expr, operator: &Token) -> Result<LoxValue, String> {
-    let right_value = evaluate(right)?;
+    fn print_statement(&mut self, expr: &Expr) -> Result<(), String> {
+        let value = self.evaluate(expr)?;
+        std::println!("{}", stringify(&value));
+        Result::Ok(())
+    }
 
-    match operator.ttype {
-        TokenType::Minus => {
-            if let LoxValue::NumberValue(value) = right_value {
-                return Result::Ok(LoxValue::NumberValue(-1.0 * value));
-            } else {
+    fn evaluate(&self, expr: &Expr) -> Result<LoxValue, String> {
+        match expr {
+            Expr::Binary {
+                left,
+                right,
+                operator,
+            } => self.evaluate_binary(left, right, operator),
+            Expr::Grouping { expression } => self.evaluate(expression),
+            Expr::Literal { value } => Result::Ok(value.clone()),
+            Expr::Unary { right, operator } => self.evaluate_unary(right, operator),
+            Expr::Variable { name } => self.environment.get(&name),
+        }
+    }
+
+    fn evaluate_unary(&self, right: &Expr, operator: &Token) -> Result<LoxValue, String> {
+        let right_value = self.evaluate(right)?;
+
+        match operator.ttype {
+            TokenType::Minus => {
+                if let LoxValue::NumberValue(value) = right_value {
+                    return Result::Ok(LoxValue::NumberValue(-1.0 * value));
+                } else {
+                    return Result::Err(format!(
+                        "evaluate_unary expected numeric value, got {:?}.\n[line {}]",
+                        right_value, operator.line
+                    ));
+                }
+            }
+            TokenType::Bang => {
+                return Result::Ok(LoxValue::BoolValue(!is_truthy(&right_value)));
+            }
+            _ => {
                 return Result::Err(format!(
-                    "evaluate_unary expected numeric value, got {:?}.\n[line {}]",
-                    right_value, operator.line
+                    "Unsupported unary operator {:?}.\n[line {}]",
+                    operator.ttype, operator.line
                 ));
             }
         }
-        TokenType::Bang => {
-            return Result::Ok(LoxValue::BoolValue(!is_truthy(&right_value)));
-        }
-        _ => {
-            return Result::Err(format!(
-                "Unsupported unary operator {:?}.\n[line {}]",
-                operator.ttype, operator.line
-            ));
-        }
-    }
-}
-
-fn evaluate_binary(left: &Expr, right: &Expr, operator: &Token) -> Result<LoxValue, String> {
-    let left_value = evaluate(left)?;
-    let right_value = evaluate(right)?;
-
-    match operator.ttype {
-        TokenType::BangEqual => {
-            return Result::Ok(LoxValue::BoolValue(!is_equal(&left_value, &right_value)));
-        }
-        TokenType::EqualEqual => {
-            return Result::Ok(LoxValue::BoolValue(is_equal(&left_value, &right_value)));
-        }
-        _ => (),
     }
 
-    if let LoxValue::StringValue(left_string) = &left_value {
-        if let LoxValue::StringValue(right_string) = &right_value {
-            if operator.ttype == TokenType::Plus {
-                return Result::Ok(LoxValue::StringValue(left_string.to_owned() + right_string));
+    fn evaluate_binary(
+        &self,
+        left: &Expr,
+        right: &Expr,
+        operator: &Token,
+    ) -> Result<LoxValue, String> {
+        let left_value = self.evaluate(left)?;
+        let right_value = self.evaluate(right)?;
+
+        match operator.ttype {
+            TokenType::BangEqual => {
+                return Result::Ok(LoxValue::BoolValue(!is_equal(&left_value, &right_value)));
+            }
+            TokenType::EqualEqual => {
+                return Result::Ok(LoxValue::BoolValue(is_equal(&left_value, &right_value)));
+            }
+            _ => (),
+        }
+
+        if let LoxValue::StringValue(left_string) = &left_value {
+            if let LoxValue::StringValue(right_string) = &right_value {
+                if operator.ttype == TokenType::Plus {
+                    return Result::Ok(LoxValue::StringValue(
+                        left_string.to_owned() + right_string,
+                    ));
+                }
             }
         }
-    }
 
-    if let LoxValue::NumberValue(left_number) = left_value {
-        if let LoxValue::NumberValue(right_number) = right_value {
-            match operator.ttype {
-                // Arithmetic operators
-                TokenType::Minus => {
-                    return Result::Ok(LoxValue::NumberValue(left_number - right_number));
+        if let LoxValue::NumberValue(left_number) = left_value {
+            if let LoxValue::NumberValue(right_number) = right_value {
+                match operator.ttype {
+                    // Arithmetic operators
+                    TokenType::Minus => {
+                        return Result::Ok(LoxValue::NumberValue(left_number - right_number));
+                    }
+                    TokenType::Plus => {
+                        return Result::Ok(LoxValue::NumberValue(left_number + right_number));
+                    }
+                    TokenType::Slash => {
+                        return Result::Ok(LoxValue::NumberValue(left_number / right_number));
+                    }
+                    TokenType::Star => {
+                        return Result::Ok(LoxValue::NumberValue(left_number * right_number));
+                    }
+                    // Comparison operators
+                    TokenType::Greater => {
+                        return Result::Ok(LoxValue::BoolValue(left_number > right_number));
+                    }
+                    TokenType::GreaterEqual => {
+                        return Result::Ok(LoxValue::BoolValue(left_number >= right_number));
+                    }
+                    TokenType::Less => {
+                        return Result::Ok(LoxValue::BoolValue(left_number < right_number));
+                    }
+                    TokenType::LessEqual => {
+                        return Result::Ok(LoxValue::BoolValue(left_number <= right_number));
+                    }
+                    _ => (),
                 }
-                TokenType::Plus => {
-                    return Result::Ok(LoxValue::NumberValue(left_number + right_number));
-                }
-                TokenType::Slash => {
-                    return Result::Ok(LoxValue::NumberValue(left_number / right_number));
-                }
-                TokenType::Star => {
-                    return Result::Ok(LoxValue::NumberValue(left_number * right_number));
-                }
-                // Comparison operators
-                TokenType::Greater => {
-                    return Result::Ok(LoxValue::BoolValue(left_number > right_number));
-                }
-                TokenType::GreaterEqual => {
-                    return Result::Ok(LoxValue::BoolValue(left_number >= right_number));
-                }
-                TokenType::Less => {
-                    return Result::Ok(LoxValue::BoolValue(left_number < right_number));
-                }
-                TokenType::LessEqual => {
-                    return Result::Ok(LoxValue::BoolValue(left_number <= right_number));
-                }
-                _ => (),
             }
         }
-    }
 
-    return Result::Err(format!(
-        "Unsupported operands {:?}, {:?}, {:?}.\n[line {}]",
-        operator, left_value, right_value, operator.line
-    ));
+        return Result::Err(format!(
+            "Unsupported operands {:?}, {:?}, {:?}.\n[line {}]",
+            operator, left_value, right_value, operator.line
+        ));
+    }
 }
 
 /// false and nil are falsey, and everything else is truthy
@@ -157,16 +193,18 @@ fn is_equal(a: &LiteralType, b: &LiteralType) -> bool {
     a == b
 }
 
-fn evaluate(expr: &Expr) -> Result<LoxValue, String> {
-    match expr {
-        Expr::Binary {
-            left,
-            right,
-            operator,
-        } => evaluate_binary(left, right, operator),
-        Expr::Grouping { expression } => evaluate(expression),
-        Expr::Literal { value } => Result::Ok(value.clone()),
-        Expr::Unary { right, operator } => evaluate_unary(right, operator),
+fn stringify(lox_value: &LoxValue) -> String {
+    match lox_value {
+        LoxValue::NoneValue => "nil".to_string(),
+        LoxValue::NumberValue(value) => {
+            let mut text = value.to_string();
+            if text.ends_with(".0") {
+                text = text[0..text.len() - 2].to_string()
+            }
+            return text;
+        }
+        LoxValue::BoolValue(value) => value.to_string(),
+        LoxValue::StringValue(value) => value.clone(),
     }
 }
 
@@ -185,7 +223,8 @@ mod tests {
             line: 1,
         };
 
-        let result_bool = evaluate_unary(&right_bool, &operator_bang);
+        let intp = Interpreter::new();
+        let result_bool = intp.evaluate_unary(&right_bool, &operator_bang);
         assert_eq!(result_bool.unwrap(), LoxValue::BoolValue(false));
     }
 
@@ -201,7 +240,8 @@ mod tests {
             value: LiteralType::NumberValue(42.0),
         };
 
-        let result_number = evaluate_unary(&right_number, &operator_minus);
+        let intp = Interpreter::new();
+        let result_number = intp.evaluate_unary(&right_number, &operator_minus);
         assert_eq!(result_number.unwrap(), LoxValue::NumberValue(-42.0));
     }
 
@@ -220,7 +260,8 @@ mod tests {
             value: LiteralType::StringValue("c".to_string()),
         };
 
-        let result_str = evaluate_binary(&left_str, &right_str, &operator_plus);
+        let intp = Interpreter::new();
+        let result_str = intp.evaluate_binary(&left_str, &right_str, &operator_plus);
         assert_eq!(
             result_str.unwrap(),
             LoxValue::StringValue("abc".to_string())
@@ -245,68 +286,76 @@ mod tests {
     #[test]
     fn test_evaluate_binary_plus() {
         let op = create_op(TokenType::Plus, "+");
-        let result = evaluate_binary(&create_num_expr(2.0), &create_num_expr(3.0), &op);
+        let intp = Interpreter::new();
+        let result = intp.evaluate_binary(&create_num_expr(2.0), &create_num_expr(3.0), &op);
         assert_eq!(result.unwrap(), LoxValue::NumberValue(5.0));
     }
 
     #[test]
     fn test_evaluate_binary_minus() {
         let op = create_op(TokenType::Minus, "-");
-        let result = evaluate_binary(&create_num_expr(5.0), &create_num_expr(3.0), &op);
+        let intp = Interpreter::new();
+        let result = intp.evaluate_binary(&create_num_expr(5.0), &create_num_expr(3.0), &op);
         assert_eq!(result.unwrap(), LoxValue::NumberValue(2.0));
     }
 
     #[test]
     fn test_evaluate_binary_star() {
         let op = create_op(TokenType::Star, "*");
-        let result = evaluate_binary(&create_num_expr(5.0), &create_num_expr(3.0), &op);
+        let intp = Interpreter::new();
+        let result = intp.evaluate_binary(&create_num_expr(5.0), &create_num_expr(3.0), &op);
         assert_eq!(result.unwrap(), LoxValue::NumberValue(15.0));
     }
 
     #[test]
     fn test_evaluate_binary_slash() {
         let op = create_op(TokenType::Slash, "/");
-        let result = evaluate_binary(&create_num_expr(6.0), &create_num_expr(3.0), &op);
+        let intp = Interpreter::new();
+        let result = intp.evaluate_binary(&create_num_expr(6.0), &create_num_expr(3.0), &op);
         assert_eq!(result.unwrap(), LoxValue::NumberValue(2.0));
     }
 
     #[test]
     fn test_evaluate_binary_greater() {
         let op = create_op(TokenType::Greater, ">");
-        let result1 = evaluate_binary(&create_num_expr(5.0), &create_num_expr(3.0), &op);
+        let intp = Interpreter::new();
+        let result1 = intp.evaluate_binary(&create_num_expr(5.0), &create_num_expr(3.0), &op);
         assert_eq!(result1.unwrap(), LoxValue::BoolValue(true));
-        
-        let result2 = evaluate_binary(&create_num_expr(3.0), &create_num_expr(5.0), &op);
+
+        let result2 = intp.evaluate_binary(&create_num_expr(3.0), &create_num_expr(5.0), &op);
         assert_eq!(result2.unwrap(), LoxValue::BoolValue(false));
     }
 
     #[test]
     fn test_evaluate_binary_greater_equal() {
         let op = create_op(TokenType::GreaterEqual, ">=");
-        let result1 = evaluate_binary(&create_num_expr(5.0), &create_num_expr(5.0), &op);
+        let intp = Interpreter::new();
+        let result1 = intp.evaluate_binary(&create_num_expr(5.0), &create_num_expr(5.0), &op);
         assert_eq!(result1.unwrap(), LoxValue::BoolValue(true));
 
-        let result2 = evaluate_binary(&create_num_expr(4.0), &create_num_expr(5.0), &op);
+        let result2 = intp.evaluate_binary(&create_num_expr(4.0), &create_num_expr(5.0), &op);
         assert_eq!(result2.unwrap(), LoxValue::BoolValue(false));
     }
 
     #[test]
     fn test_evaluate_binary_less() {
         let op = create_op(TokenType::Less, "<");
-        let result1 = evaluate_binary(&create_num_expr(3.0), &create_num_expr(5.0), &op);
+        let intp = Interpreter::new();
+        let result1 = intp.evaluate_binary(&create_num_expr(3.0), &create_num_expr(5.0), &op);
         assert_eq!(result1.unwrap(), LoxValue::BoolValue(true));
 
-        let result2 = evaluate_binary(&create_num_expr(5.0), &create_num_expr(3.0), &op);
+        let result2 = intp.evaluate_binary(&create_num_expr(5.0), &create_num_expr(3.0), &op);
         assert_eq!(result2.unwrap(), LoxValue::BoolValue(false));
     }
 
     #[test]
     fn test_evaluate_binary_less_equal() {
         let op = create_op(TokenType::LessEqual, "<=");
-        let result1 = evaluate_binary(&create_num_expr(5.0), &create_num_expr(5.0), &op);
+        let intp = Interpreter::new();
+        let result1 = intp.evaluate_binary(&create_num_expr(5.0), &create_num_expr(5.0), &op);
         assert_eq!(result1.unwrap(), LoxValue::BoolValue(true));
 
-        let result2 = evaluate_binary(&create_num_expr(6.0), &create_num_expr(5.0), &op);
+        let result2 = intp.evaluate_binary(&create_num_expr(6.0), &create_num_expr(5.0), &op);
         assert_eq!(result2.unwrap(), LoxValue::BoolValue(false));
     }
 }

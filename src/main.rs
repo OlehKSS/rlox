@@ -1,3 +1,4 @@
+mod environment;
 mod interpreter;
 mod parser;
 mod scanner;
@@ -6,7 +7,7 @@ use std::env;
 use std::fs;
 use std::io::{self, Write};
 
-use interpreter::interpret;
+use interpreter::Interpreter;
 use parser::Parser;
 use scanner::Scanner;
 
@@ -31,6 +32,7 @@ fn main() {
 struct Lox {
     had_error: bool,
     had_runtime_error: bool,
+    interpreter: Interpreter,
 }
 
 impl Lox {
@@ -38,6 +40,7 @@ impl Lox {
         Lox {
             had_error: false,
             had_runtime_error: false,
+            interpreter: Interpreter::new(),
         }
     }
 
@@ -101,13 +104,13 @@ impl Lox {
         let parse_result = parser.parse();
 
         if let Result::Err(error_messages) = parse_result {
-            for emsg in &error_messages{
+            for emsg in &error_messages {
                 eprintln!("{}", emsg);
             }
             return;
         }
 
-        interpret(&parse_result.unwrap());
+        self.interpreter.interpret(&parse_result.unwrap());
     }
 
     fn error(&mut self, line: i64, message: &str) {
