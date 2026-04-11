@@ -1,3 +1,6 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use super::environment::Environment;
 use super::parser::{Expr, Stmt};
 use super::scanner::{LiteralType, Token, TokenType};
@@ -5,57 +8,41 @@ use super::scanner::{LiteralType, Token, TokenType};
 type LoxValue = LiteralType;
 
 pub struct Interpreter {
-    environment: Environment,
+    environment: Rc<RefCell<Environment>>,
 }
 
 impl Interpreter {
     pub fn new() -> Self {
         Interpreter {
-            environment: Environment::new(),
+            environment: Rc::new(RefCell::new(Environment::new())),
         }
     }
 
     pub fn interpret(&mut self, statements: &Vec<Stmt>) {
         for stmt in statements {
-            let mut runtime_error = String::new();
+            let res = self.execute_statement(stmt);
 
-            match &stmt {
-                Stmt::Expression { expression } => {
-                    let res = self.evaluate(expression);
-
-                    if let Result::Err(emsg) = res {
-                        runtime_error = emsg;
-                    }
-                }
-                Stmt::Print { expression } => {
-                    let res = self.print_statement(expression);
-
-                    if let Result::Err(emsg) = res {
-                        runtime_error = emsg;
-                    }
-                }
-                Stmt::Var { name, initializer } => {
-                    let mut value = LiteralType::NoneValue;
-                    if let Option::Some(expr) = initializer {
-                        let res = self.evaluate(expr);
-
-                        match res {
-                            Result::Ok(expr_value) => {
-                                value = expr_value;
-                            }
-                            Result::Err(emsg) => {
-                                std::eprintln!("Runtime error: {}", emsg);
-                                continue;
-                            }
-                        };
-                    }
-
-                    self.environment.define(&name, &value);
-                }
-            };
-
-            if !runtime_error.is_empty() {
+            if let Result::Err(runtime_error) = &res {
                 std::eprintln!("Runtime error: {}", runtime_error);
+            }
+        }
+    }
+
+    fn execute_statement(&mut self, statement: &Stmt) -> Result<(), String> {
+        match statement {
+            Stmt::Block { statements } => self.execute_block(statements),
+            Stmt::Expression { expression } => {
+                self.evaluate(expression)?;
+                Result::Ok(())
+            }
+            Stmt::Print { expression } => self.print_statement(expression),
+            Stmt::Var { name, initializer } => {
+                let value = match &initializer {
+                    Option::Some(expr) => self.evaluate(expr)?,
+                    Option::None => LiteralType::NoneValue,
+                };
+                self.environment.borrow_mut().define(&name, &value);
+                Result::Ok(())
             }
         }
     }
@@ -66,11 +53,30 @@ impl Interpreter {
         Result::Ok(())
     }
 
+    fn execute_block(&mut self, statements: &Vec<Stmt>) -> Result<(), String> {
+        let previous = self.environment.clone();
+        self.environment = Rc::new(RefCell::new(Environment::new_with_enclosing(
+            previous.clone(),
+        )));
+
+        for stmt in statements {
+            let res = self.execute_statement(stmt);
+
+            if let Result::Err(_) = &res {
+                self.environment = previous;
+                return res;
+            }
+        }
+
+        self.environment = previous;
+        Result::Ok(())
+    }
+
     fn evaluate(&mut self, expr: &Expr) -> Result<LoxValue, String> {
         match expr {
             Expr::Assign { name, value } => {
                 let rvalue = self.evaluate(value)?;
-                self.environment.assign(name, &rvalue)?;
+                self.environment.borrow_mut().assign(name, &rvalue)?;
                 Result::Ok(rvalue)
             }
             Expr::Binary {
@@ -81,7 +87,7 @@ impl Interpreter {
             Expr::Grouping { expression } => self.evaluate(expression),
             Expr::Literal { value } => Result::Ok(value.clone()),
             Expr::Unary { right, operator } => self.evaluate_unary(right, operator),
-            Expr::Variable { name } => self.environment.get(&name),
+            Expr::Variable { name } => self.environment.borrow().get(&name),
         }
     }
 
@@ -215,6 +221,8 @@ fn stringify(lox_value: &LoxValue) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::parser::Parser;
+    use super::super::scanner::Scanner;
     use super::*;
     #[test]
     fn test_evaluate_unary_bool() {
@@ -375,6 +383,7 @@ mod tests {
         };
 
         intp.environment
+            .borrow_mut()
             .define(&var_a, &LiteralType::NumberValue(1.0));
 
         let var_a_expr = Expr::Variable {
@@ -399,6 +408,28 @@ mod tests {
         assert_eq!(
             intp.evaluate(&var_a_expr).unwrap(),
             LiteralType::NumberValue(42.0)
+        );
+    }
+
+    #[test]
+    fn test_variable_scope() {
+        let source = "var a = 42; { var b = -1;  a = b; }";
+        let mut scanner = Scanner::new(source);
+        let (tokens, lex_errors) = scanner.scan_tokens();
+
+        assert!(lex_errors.is_empty());
+        assert_eq!(tokens[0].ttype, TokenType::Var);
+        assert_eq!(tokens[1].ttype, TokenType::Identifier);
+
+        let mut parser = Parser::new(tokens.clone());
+        let statements = parser.parse().unwrap();
+
+        let mut intp = Interpreter::new();
+        intp.interpret(&statements);
+
+        assert_eq!(
+            intp.environment.borrow_mut().get(&tokens[1]).unwrap(),
+            LiteralType::NumberValue(-1.0)
         );
     }
 }

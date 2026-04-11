@@ -2,8 +2,28 @@ use core::fmt;
 
 use super::scanner::{LiteralType, Token, TokenType};
 
+/// program → declaration* EOF ;
+/// declaration → varDecl | statement ;
+/// varDecl → "var" IDENTIFIER ( "=" expression )? ";" ;
+/// statement → exprStmt | printStmt | block ;
+/// exprStmt → expression ";" ;
+/// printStmt → "print" expression ";" ;
+/// block → "{" declaration* "}" ;
+/// expression → assignment ;
+/// assignment → IDENTIFIER "=" assignment | equality ;
+/// equality   → comparison ( ( "!=" | "==" ) comparison )* ;
+/// comparison → term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
+/// term       → factor ( ( "-" | "+" ) factor )* ;
+/// factor     → unary ( ( "/" | "*" ) unary )* ;
+/// unary      → ( "!" | "-" ) unary | primary ;
+/// primary    → NUMBER | STRING | "true" | "false" | "nil" | "(" expression ")" | IDENTIFIER ;
+
+/// Statements
 #[derive(Debug, Clone)]
 pub enum Stmt {
+    Block {
+        statements: Vec<Stmt>,
+    },
     Expression {
         expression: Box<Expr>,
     },
@@ -16,6 +36,7 @@ pub enum Stmt {
     },
 }
 
+/// Expressions
 #[derive(Debug, Clone)]
 pub enum Expr {
     Assign {
@@ -94,20 +115,6 @@ fn parenthesize(name: &str, exprs: &[&Expr]) -> String {
     out
 }
 
-// program → declaration* EOF ;
-// declaration → varDecl | statement ;
-// varDecl → "var" IDENTIFIER ( "=" expression )? ";" ;
-// statement → exprStmt | printStmt ;
-// exprStmt → expression ";" ;
-// printStmt → "print" expression ";" ;
-// expression → assignment ;
-// assignment → IDENTIFIER "=" assignment | equality ;
-// equality   → comparison ( ( "!=" | "==" ) comparison )* ;
-// comparison → term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
-// term       → factor ( ( "-" | "+" ) factor )* ;
-// factor     → unary ( ( "/" | "*" ) unary )* ;
-// unary      → ( "!" | "-" ) unary | primary ;
-// primary    → NUMBER | STRING | "true" | "false" | "nil" | "(" expression ")" | IDENTIFIER ;
 pub struct Parser {
     tokens: Vec<Token>,
     current: usize,
@@ -174,7 +181,12 @@ impl Parser {
             return self.print_statement();
         }
 
-        self.expression_statment()
+        if self.match_token_type(&[TokenType::LeftBrace]) {
+            let stmts = self.block_statement()?;
+            return Result::Ok(Stmt::Block { statements: stmts });
+        }
+
+        self.expression_statement()
     }
 
     fn print_statement(&mut self) -> Result<Stmt, String> {
@@ -186,13 +198,26 @@ impl Parser {
         })
     }
 
-    fn expression_statment(&mut self) -> Result<Stmt, String> {
+    fn expression_statement(&mut self) -> Result<Stmt, String> {
         let expr = self.expression()?;
         self.consume(TokenType::Semicolon, "Expected ';' after expression.")?;
 
         Result::Ok(Stmt::Expression {
             expression: Box::new(expr),
         })
+    }
+
+    fn block_statement(&mut self) -> Result<Vec<Stmt>, String> {
+        let mut statements: Vec<Stmt> = Vec::new();
+
+        while !self.check(TokenType::RightBrace) && !self.is_at_end() {
+            let decl = self.declaration()?;
+            statements.push(decl);
+        }
+
+        self.consume(TokenType::RightBrace, "Expect '}' after block")?;
+
+        Result::Ok(statements)
     }
 
     fn expression(&mut self) -> Result<Expr, String> {
