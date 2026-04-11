@@ -18,6 +18,10 @@ pub enum Stmt {
 
 #[derive(Debug, Clone)]
 pub enum Expr {
+    Assign {
+        name: Token,
+        value: Box<Expr>,
+    },
     Binary {
         left: Box<Expr>,
         right: Box<Expr>,
@@ -41,6 +45,9 @@ pub enum Expr {
 impl fmt::Display for Expr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match &self {
+            Expr::Assign { name, value } => {
+                write!(f, "{} = {}", name.lexeme, value.to_string())
+            }
             Expr::Binary {
                 left,
                 right,
@@ -93,7 +100,8 @@ fn parenthesize(name: &str, exprs: &[&Expr]) -> String {
 // statement → exprStmt | printStmt ;
 // exprStmt → expression ";" ;
 // printStmt → "print" expression ";" ;
-// expression → equality ;
+// expression → assignment ;
+// assignment → IDENTIFIER "=" assignment | equality ;
 // equality   → comparison ( ( "!=" | "==" ) comparison )* ;
 // comparison → term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
 // term       → factor ( ( "-" | "+" ) factor )* ;
@@ -188,7 +196,27 @@ impl Parser {
     }
 
     fn expression(&mut self) -> Result<Expr, String> {
-        self.equality()
+        self.assignment()
+    }
+
+    fn assignment(&mut self) -> Result<Expr, String> {
+        let expr = self.equality()?;
+
+        if self.match_token_type(&[TokenType::Equal]) {
+            let equals_pos = self.previous_index();
+            let value = self.assignment()?;
+
+            if let Expr::Variable { name } = expr {
+                return Result::Ok(Expr::Assign {
+                    name: name,
+                    value: Box::new(value),
+                });
+            }
+
+            return Result::Err(self.error("Invalid assignment target.", &self.tokens[equals_pos]));
+        }
+
+        Result::Ok(expr)
     }
 
     fn equality(&mut self) -> Result<Expr, String> {
@@ -307,8 +335,11 @@ impl Parser {
             });
         }
 
-        let token_type = self.advance().ttype;
-        Result::Err(self.error(&format!("Unexpected primary token {:?}", token_type)))
+        self.advance();
+        Result::Err(self.error(
+            &format!("Unexpected primary token {:?}", self.previous().ttype),
+            self.previous(),
+        ))
     }
 
     fn match_token_type(&mut self, token_types: &[TokenType]) -> bool {
@@ -335,7 +366,7 @@ impl Parser {
             return Result::Ok(&self.advance());
         }
 
-        Result::Err(self.error(message))
+        Result::Err(self.error(message, &self.peek()))
     }
 
     fn advance(&mut self) -> &Token {
@@ -354,18 +385,21 @@ impl Parser {
         &self.tokens[self.current - 1]
     }
 
+    fn previous_index(&self) -> usize {
+        self.current - 1
+    }
+
     fn is_at_end(&self) -> bool {
         self.peek().ttype == TokenType::Eof
     }
 
-    fn error(&self, message: &str) -> String {
-        if self.peek().ttype == TokenType::Eof {
-            format!("[line {}] Error at end: {message}", self.peek().line)
+    fn error(&self, message: &str, token: &Token) -> String {
+        if token.ttype == TokenType::Eof {
+            format!("[line {}] Error at end: {message}", token.line)
         } else {
             format!(
                 "[line {}] Error at '{}': {message}",
-                self.peek().line,
-                self.peek().lexeme
+                token.line, token.lexeme
             )
         }
     }
@@ -373,7 +407,7 @@ impl Parser {
 
 #[cfg(test)]
 mod tests {
-    use super::super::scanner::TokenType;
+    use super::super::scanner::{Scanner, TokenType};
     use super::*;
 
     #[test]
@@ -416,7 +450,7 @@ mod tests {
 
     #[test]
     fn test_expr_parsing() {
-        let mut scanner = Scanner::new("-123 * (45.67)");
+        let mut scanner = Scanner::new("-123 * (45.67);");
         let (tokens, errors) = scanner.scan_tokens();
 
         assert!(errors.is_empty());
@@ -424,6 +458,12 @@ mod tests {
         let mut parser = Parser::new(tokens.clone());
         let ptree = parser.parse().unwrap();
 
-        assert_eq!(ptree.to_string(), "(* (- 123) (group 45.67))");
+        assert_eq!(ptree.len(), 1);
+
+        if let Stmt::Expression { expression } = &ptree[0] {
+            assert_eq!(expression.to_string(), "(* (- 123) (group 45.67))");
+        } else {
+            assert!(false);
+        }
     }
 }

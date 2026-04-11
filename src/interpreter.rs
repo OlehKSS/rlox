@@ -44,13 +44,13 @@ impl Interpreter {
                                 value = expr_value;
                             }
                             Result::Err(emsg) => {
-                                runtime_error = emsg;
+                                std::eprintln!("Runtime error: {}", emsg);
                                 continue;
                             }
                         };
                     }
 
-                    self.environment.define(&name.lexeme, &value);
+                    self.environment.define(&name, &value);
                 }
             };
 
@@ -66,8 +66,13 @@ impl Interpreter {
         Result::Ok(())
     }
 
-    fn evaluate(&self, expr: &Expr) -> Result<LoxValue, String> {
+    fn evaluate(&mut self, expr: &Expr) -> Result<LoxValue, String> {
         match expr {
+            Expr::Assign { name, value } => {
+                let rvalue = self.evaluate(value)?;
+                self.environment.assign(name, &rvalue)?;
+                Result::Ok(rvalue)
+            }
             Expr::Binary {
                 left,
                 right,
@@ -80,7 +85,7 @@ impl Interpreter {
         }
     }
 
-    fn evaluate_unary(&self, right: &Expr, operator: &Token) -> Result<LoxValue, String> {
+    fn evaluate_unary(&mut self, right: &Expr, operator: &Token) -> Result<LoxValue, String> {
         let right_value = self.evaluate(right)?;
 
         match operator.ttype {
@@ -107,7 +112,7 @@ impl Interpreter {
     }
 
     fn evaluate_binary(
-        &self,
+        &mut self,
         left: &Expr,
         right: &Expr,
         operator: &Token,
@@ -223,7 +228,7 @@ mod tests {
             line: 1,
         };
 
-        let intp = Interpreter::new();
+        let mut intp = Interpreter::new();
         let result_bool = intp.evaluate_unary(&right_bool, &operator_bang);
         assert_eq!(result_bool.unwrap(), LoxValue::BoolValue(false));
     }
@@ -240,7 +245,7 @@ mod tests {
             value: LiteralType::NumberValue(42.0),
         };
 
-        let intp = Interpreter::new();
+        let mut intp = Interpreter::new();
         let result_number = intp.evaluate_unary(&right_number, &operator_minus);
         assert_eq!(result_number.unwrap(), LoxValue::NumberValue(-42.0));
     }
@@ -260,7 +265,7 @@ mod tests {
             value: LiteralType::StringValue("c".to_string()),
         };
 
-        let intp = Interpreter::new();
+        let mut intp = Interpreter::new();
         let result_str = intp.evaluate_binary(&left_str, &right_str, &operator_plus);
         assert_eq!(
             result_str.unwrap(),
@@ -286,7 +291,7 @@ mod tests {
     #[test]
     fn test_evaluate_binary_plus() {
         let op = create_op(TokenType::Plus, "+");
-        let intp = Interpreter::new();
+        let mut intp = Interpreter::new();
         let result = intp.evaluate_binary(&create_num_expr(2.0), &create_num_expr(3.0), &op);
         assert_eq!(result.unwrap(), LoxValue::NumberValue(5.0));
     }
@@ -294,7 +299,7 @@ mod tests {
     #[test]
     fn test_evaluate_binary_minus() {
         let op = create_op(TokenType::Minus, "-");
-        let intp = Interpreter::new();
+        let mut intp = Interpreter::new();
         let result = intp.evaluate_binary(&create_num_expr(5.0), &create_num_expr(3.0), &op);
         assert_eq!(result.unwrap(), LoxValue::NumberValue(2.0));
     }
@@ -302,7 +307,7 @@ mod tests {
     #[test]
     fn test_evaluate_binary_star() {
         let op = create_op(TokenType::Star, "*");
-        let intp = Interpreter::new();
+        let mut intp = Interpreter::new();
         let result = intp.evaluate_binary(&create_num_expr(5.0), &create_num_expr(3.0), &op);
         assert_eq!(result.unwrap(), LoxValue::NumberValue(15.0));
     }
@@ -310,7 +315,7 @@ mod tests {
     #[test]
     fn test_evaluate_binary_slash() {
         let op = create_op(TokenType::Slash, "/");
-        let intp = Interpreter::new();
+        let mut intp = Interpreter::new();
         let result = intp.evaluate_binary(&create_num_expr(6.0), &create_num_expr(3.0), &op);
         assert_eq!(result.unwrap(), LoxValue::NumberValue(2.0));
     }
@@ -318,7 +323,7 @@ mod tests {
     #[test]
     fn test_evaluate_binary_greater() {
         let op = create_op(TokenType::Greater, ">");
-        let intp = Interpreter::new();
+        let mut intp = Interpreter::new();
         let result1 = intp.evaluate_binary(&create_num_expr(5.0), &create_num_expr(3.0), &op);
         assert_eq!(result1.unwrap(), LoxValue::BoolValue(true));
 
@@ -329,7 +334,7 @@ mod tests {
     #[test]
     fn test_evaluate_binary_greater_equal() {
         let op = create_op(TokenType::GreaterEqual, ">=");
-        let intp = Interpreter::new();
+        let mut intp = Interpreter::new();
         let result1 = intp.evaluate_binary(&create_num_expr(5.0), &create_num_expr(5.0), &op);
         assert_eq!(result1.unwrap(), LoxValue::BoolValue(true));
 
@@ -340,7 +345,7 @@ mod tests {
     #[test]
     fn test_evaluate_binary_less() {
         let op = create_op(TokenType::Less, "<");
-        let intp = Interpreter::new();
+        let mut intp = Interpreter::new();
         let result1 = intp.evaluate_binary(&create_num_expr(3.0), &create_num_expr(5.0), &op);
         assert_eq!(result1.unwrap(), LoxValue::BoolValue(true));
 
@@ -351,11 +356,49 @@ mod tests {
     #[test]
     fn test_evaluate_binary_less_equal() {
         let op = create_op(TokenType::LessEqual, "<=");
-        let intp = Interpreter::new();
+        let mut intp = Interpreter::new();
         let result1 = intp.evaluate_binary(&create_num_expr(5.0), &create_num_expr(5.0), &op);
         assert_eq!(result1.unwrap(), LoxValue::BoolValue(true));
 
         let result2 = intp.evaluate_binary(&create_num_expr(6.0), &create_num_expr(5.0), &op);
         assert_eq!(result2.unwrap(), LoxValue::BoolValue(false));
+    }
+
+    #[test]
+    fn test_global_variables() {
+        let mut intp = Interpreter::new();
+        let var_a = Token {
+            ttype: TokenType::Var,
+            lexeme: "a".to_string(),
+            literal: LiteralType::NoneValue,
+            line: 1,
+        };
+
+        intp.environment
+            .define(&var_a, &LiteralType::NumberValue(1.0));
+
+        let var_a_expr = Expr::Variable {
+            name: var_a.clone(),
+        };
+
+        assert_eq!(
+            intp.evaluate(&var_a_expr).unwrap(),
+            LiteralType::NumberValue(1.0)
+        );
+
+        let literal = Box::new(Expr::Literal {
+            value: LiteralType::NumberValue(42.0),
+        });
+        let assign_expr = Expr::Assign {
+            name: var_a,
+            value: literal,
+        };
+
+        intp.evaluate(&assign_expr).unwrap();
+
+        assert_eq!(
+            intp.evaluate(&var_a_expr).unwrap(),
+            LiteralType::NumberValue(42.0)
+        );
     }
 }
