@@ -47,7 +47,7 @@ impl Lox {
     fn run_file(&mut self, script_path: &str) {
         match fs::read_to_string(script_path) {
             Ok(file_contents) => {
-                self.run(&file_contents);
+                self.run(&file_contents, false);
 
                 if self.had_error {
                     std::process::exit(EXIT_DATAERR);
@@ -78,7 +78,14 @@ impl Lox {
                     }
 
                     let line = input.trim();
-                    self.run(line);
+
+                    if line.ends_with(';') || line.ends_with('}') {
+                        self.run(&line, true);
+                    } else {
+                        let mut line = line.to_string();
+                        line.push(';');
+                        self.run(&line, true);
+                    }
                     self.had_error = false;
                 }
                 Err(error) => {
@@ -88,7 +95,7 @@ impl Lox {
         }
     }
 
-    fn run(&mut self, source: &str) {
+    fn run(&mut self, source: &str, repl: bool) {
         let mut scanner = Scanner::new(source);
         let (tokens, errors) = scanner.scan_tokens();
 
@@ -110,7 +117,7 @@ impl Lox {
             return;
         }
 
-        self.interpreter.interpret(&parse_result.unwrap());
+        self.interpreter.interpret(&parse_result.unwrap(), repl);
     }
 
     fn error(&mut self, line: i64, message: &str) {

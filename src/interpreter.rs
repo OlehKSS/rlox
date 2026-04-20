@@ -18,9 +18,9 @@ impl Interpreter {
         }
     }
 
-    pub fn interpret(&mut self, statements: &Vec<Stmt>) {
+    pub fn interpret(&mut self, statements: &Vec<Stmt>, repl: bool) {
         for stmt in statements {
-            let res = self.execute_statement(stmt);
+            let res = self.execute_statement(stmt, repl);
 
             if let Result::Err(runtime_error) = &res {
                 std::eprintln!("Runtime error: {}", runtime_error);
@@ -28,11 +28,15 @@ impl Interpreter {
         }
     }
 
-    fn execute_statement(&mut self, statement: &Stmt) -> Result<(), String> {
+    fn execute_statement(&mut self, statement: &Stmt, repl: bool) -> Result<(), String> {
         match statement {
             Stmt::Block { statements } => self.execute_block(statements),
             Stmt::Expression { expression } => {
-                self.evaluate(expression)?;
+                if repl {
+                    self.print_statement(expression)?;
+                } else {
+                    self.evaluate(expression)?;
+                }
                 Result::Ok(())
             }
             Stmt::Print { expression } => self.print_statement(expression),
@@ -60,7 +64,7 @@ impl Interpreter {
         )));
 
         for stmt in statements {
-            let res = self.execute_statement(stmt);
+            let res = self.execute_statement(stmt, false);
 
             if let Result::Err(_) = &res {
                 self.environment = previous;
