@@ -39,6 +39,11 @@ impl Interpreter {
                 }
                 Result::Ok(())
             }
+            Stmt::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => self.if_statement(condition, then_branch, else_branch.as_deref()),
             Stmt::Print { expression } => self.print_statement(expression),
             Stmt::Var { name, initializer } => {
                 let value = match &initializer {
@@ -49,6 +54,22 @@ impl Interpreter {
                 Result::Ok(())
             }
         }
+    }
+
+    fn if_statement(
+        &mut self,
+        condition: &Expr,
+        then_branch: &Stmt,
+        else_branch: Option<&Stmt>,
+    ) -> Result<(), String> {
+        let cond_value = self.evaluate(condition)?;
+        if is_truthy(&cond_value) {
+            self.execute_statement(then_branch, false)?;
+        } else if let Some(else_stmt) = else_branch {
+            self.execute_statement(else_stmt, false)?;
+        }
+
+        Result::Ok(())
     }
 
     fn print_statement(&mut self, expr: &Expr) -> Result<(), String> {
@@ -90,9 +111,37 @@ impl Interpreter {
             } => self.evaluate_binary(left, right, operator),
             Expr::Grouping { expression } => self.evaluate(expression),
             Expr::Literal { value } => Result::Ok(value.clone()),
+            Expr::Logical {
+                left,
+                right,
+                operator,
+            } => self.evaluate_logical(left, right, operator),
             Expr::Unary { right, operator } => self.evaluate_unary(right, operator),
             Expr::Variable { name } => self.environment.borrow().get(&name),
         }
+    }
+
+    fn evaluate_logical(
+        &mut self,
+        left: &Expr,
+        right: &Expr,
+        operator: &Token,
+    ) -> Result<LoxValue, String> {
+        let left = self.evaluate(left)?;
+
+        // Short-circuiting of logical operators
+        if operator.ttype == TokenType::Or {
+            if is_truthy(&left) {
+                return Result::Ok(left);
+            }
+        } else {
+            if !is_truthy(&left) {
+                return Result::Ok(left);
+            }
+        }
+
+        let right_value = self.evaluate(right)?;
+        Result::Ok(right_value)
     }
 
     fn evaluate_unary(&mut self, right: &Expr, operator: &Token) -> Result<LoxValue, String> {
@@ -377,6 +426,35 @@ mod tests {
     }
 
     #[test]
+    fn test_evaluate_logical_or() {
+        let op = create_op(TokenType::Or, "or");
+        let mut intp = Interpreter::new();
+        let false_expr = Expr::Literal {
+            value: LoxValue::BoolValue(false),
+        };
+        let result1 = intp.evaluate_logical(&create_num_expr(5.0), &false_expr, &op);
+        assert_eq!(result1.unwrap(), LoxValue::NumberValue(5.0));
+        let result2 = intp.evaluate_logical(&false_expr, &false_expr, &op);
+        assert_eq!(result2.unwrap(), LoxValue::BoolValue(false));
+    }
+
+    #[test]
+    fn test_evaluate_logical_and() {
+        let op = create_op(TokenType::And, "and");
+        let mut intp = Interpreter::new();
+        let nil_expr = Expr::Literal {
+            value: LoxValue::NoneValue,
+        };
+        let true_expr = Expr::Literal {
+            value: LoxValue::StringValue(String::new()),
+        };
+        let result1 = intp.evaluate_logical(&true_expr, &true_expr, &op);
+        assert_eq!(result1.unwrap(), LoxValue::StringValue(String::new()));
+        let result2 = intp.evaluate_logical(&nil_expr, &true_expr, &op);
+        assert_eq!(result2.unwrap(), LoxValue::NoneValue);
+    }
+
+    #[test]
     fn test_global_variables() {
         let mut intp = Interpreter::new();
         let var_a = Token {
@@ -429,7 +507,7 @@ mod tests {
         let statements = parser.parse().unwrap();
 
         let mut intp = Interpreter::new();
-        intp.interpret(&statements);
+        intp.interpret(&statements, false);
 
         assert_eq!(
             intp.environment.borrow_mut().get(&tokens[1]).unwrap(),

@@ -2,21 +2,24 @@ use core::fmt;
 
 use super::scanner::{LiteralType, Token, TokenType};
 
-/// program → declaration* EOF ;
-/// declaration → varDecl | statement ;
-/// varDecl → "var" IDENTIFIER ( "=" expression )? ";" ;
-/// statement → exprStmt | printStmt | block ;
-/// exprStmt → expression ";" ;
-/// printStmt → "print" expression ";" ;
-/// block → "{" declaration* "}" ;
-/// expression → assignment ;
-/// assignment → IDENTIFIER "=" assignment | equality ;
-/// equality   → comparison ( ( "!=" | "==" ) comparison )* ;
-/// comparison → term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
-/// term       → factor ( ( "-" | "+" ) factor )* ;
-/// factor     → unary ( ( "/" | "*" ) unary )* ;
-/// unary      → ( "!" | "-" ) unary | primary ;
-/// primary    → NUMBER | STRING | "true" | "false" | "nil" | "(" expression ")" | IDENTIFIER ;
+/// program -> declaration* EOF ;
+/// declaration -> varDecl | statement ;
+/// varDecl -> "var" IDENTIFIER ( "=" expression )? ";" ;
+/// statement -> exprStmt | ifStmt | printStmt | block ;
+/// exprStmt -> expression ";" ;
+/// ifStmt -> "if" "(" expression ")" statement ( "else" statement )? ;
+/// printStmt -> "print" expression ";" ;
+/// block -> "{" declaration* "}" ;
+/// expression -> assignment ;
+/// assignment -> IDENTIFIER "=" assignment | logic_or ;
+/// logic_or -> logic_and ( "or" logic_and )* ;
+/// logic_and -> equality ( "and" equality )* ;
+/// equality   -> comparison ( ( "!=" | "==" ) comparison )* ;
+/// comparison -> term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
+/// term       -> factor ( ( "-" | "+" ) factor )* ;
+/// factor     -> unary ( ( "/" | "*" ) unary )* ;
+/// unary      -> ( "!" | "-" ) unary | primary ;
+/// primary    -> NUMBER | STRING | "true" | "false" | "nil" | "(" expression ")" | IDENTIFIER ;
 
 /// Statements
 #[derive(Debug, Clone)]
@@ -26,6 +29,11 @@ pub enum Stmt {
     },
     Expression {
         expression: Box<Expr>,
+    },
+    If {
+        condition: Box<Expr>,
+        then_branch: Box<Stmt>,
+        else_branch: Option<Box<Stmt>>,
     },
     Print {
         expression: Box<Expr>,
@@ -53,6 +61,11 @@ pub enum Expr {
     },
     Literal {
         value: LiteralType,
+    },
+    Logical {
+        left: Box<Expr>,
+        right: Box<Expr>,
+        operator: Token,
     },
     Unary {
         right: Box<Expr>,
@@ -87,6 +100,14 @@ impl fmt::Display for Expr {
                 } else {
                     write!(f, "{}", value)
                 }
+            }
+            Expr::Logical {
+                left,
+                right,
+                operator,
+            } => {
+                let subexpr = parenthesize(&operator.lexeme, &[&left, &right]);
+                write!(f, "{}", subexpr)
             }
             Expr::Unary { right, operator } => {
                 let subexpr = parenthesize(&operator.lexeme, &[&right]);
@@ -177,6 +198,9 @@ impl Parser {
     }
 
     fn statement(&mut self) -> Result<Stmt, String> {
+        if self.match_token_type(&[TokenType::If]) {
+            return self.if_statement();
+        }
         if self.match_token_type(&[TokenType::Print]) {
             return self.print_statement();
         }
@@ -187,6 +211,26 @@ impl Parser {
         }
 
         self.expression_statement()
+    }
+
+    fn if_statement(&mut self) -> Result<Stmt, String> {
+        self.consume(TokenType::LeftParen, "Expected '(' after 'if'.")?;
+        let condition = self.expression()?;
+        self.consume(TokenType::RightParen, "Expected ')' after if condition.")?;
+
+        let then_branch = self.statement()?;
+        let else_branch = if self.match_token_type(&[TokenType::Else]) {
+            let else_branch = self.statement()?;
+            Option::Some(Box::new(else_branch))
+        } else {
+            Option::None
+        };
+
+        Result::Ok(Stmt::If {
+            condition: Box::new(condition),
+            then_branch: Box::new(then_branch),
+            else_branch: else_branch,
+        })
     }
 
     fn print_statement(&mut self) -> Result<Stmt, String> {
@@ -225,7 +269,7 @@ impl Parser {
     }
 
     fn assignment(&mut self) -> Result<Expr, String> {
-        let expr = self.equality()?;
+        let expr = self.or()?;
 
         if self.match_token_type(&[TokenType::Equal]) {
             let equals_pos = self.previous_index();
@@ -239,6 +283,38 @@ impl Parser {
             }
 
             return Result::Err(self.error("Invalid assignment target.", &self.tokens[equals_pos]));
+        }
+
+        Result::Ok(expr)
+    }
+
+    fn or(&mut self) -> Result<Expr, String> {
+        let expr = self.and()?;
+
+        while self.match_token_type(&[TokenType::Or]) {
+            let operator = self.previous().clone();
+            let right = self.and()?;
+            return Result::Ok(Expr::Logical {
+                left: Box::new(expr),
+                right: Box::new(right),
+                operator: operator,
+            });
+        }
+
+        Result::Ok(expr)
+    }
+
+    fn and(&mut self) -> Result<Expr, String> {
+        let expr = self.equality()?;
+
+        while self.match_token_type(&[TokenType::And]) {
+            let operator = self.previous().clone();
+            let right = self.equality()?;
+            return Result::Ok(Expr::Logical {
+                left: Box::new(expr),
+                right: Box::new(right),
+                operator: operator,
+            });
         }
 
         Result::Ok(expr)
