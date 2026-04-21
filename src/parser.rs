@@ -5,10 +5,12 @@ use super::scanner::{LiteralType, Token, TokenType};
 /// program -> declaration* EOF ;
 /// declaration -> varDecl | statement ;
 /// varDecl -> "var" IDENTIFIER ( "=" expression )? ";" ;
-/// statement -> exprStmt | ifStmt | printStmt | block ;
+/// statement -> exprStmt | forStmt | ifStmt | printStmt | whileStmt | block ;
 /// exprStmt -> expression ";" ;
+/// forStmt -> "for" "(" varDecl | exprStmt | ";" ) expression? ";" expression? ")" statement ;
 /// ifStmt -> "if" "(" expression ")" statement ( "else" statement )? ;
 /// printStmt -> "print" expression ";" ;
+/// whileStmt -> "while" "(" expression ")" statement ;
 /// block -> "{" declaration* "}" ;
 /// expression -> assignment ;
 /// assignment -> IDENTIFIER "=" assignment | logic_or ;
@@ -41,6 +43,10 @@ pub enum Stmt {
     Var {
         name: Token,
         initializer: Option<Box<Expr>>,
+    },
+    While {
+        condition: Box<Expr>,
+        body: Box<Stmt>,
     },
 }
 
@@ -198,11 +204,17 @@ impl Parser {
     }
 
     fn statement(&mut self) -> Result<Stmt, String> {
+        if self.match_token_type(&[TokenType::For]) {
+            return self.for_statement();
+        }
         if self.match_token_type(&[TokenType::If]) {
             return self.if_statement();
         }
         if self.match_token_type(&[TokenType::Print]) {
             return self.print_statement();
+        }
+        if self.match_token_type(&[TokenType::While]) {
+            return self.while_statement();
         }
 
         if self.match_token_type(&[TokenType::LeftBrace]) {
@@ -211,6 +223,66 @@ impl Parser {
         }
 
         self.expression_statement()
+    }
+
+    fn for_statement(&mut self) -> Result<Stmt, String> {
+        self.consume(TokenType::LeftParen, "Expected '(' after 'for'.")?;
+
+        let initializer = if self.match_token_type(&[TokenType::Semicolon]) {
+            Option::None
+        } else if self.match_token_type(&[TokenType::Var]) {
+            let var_stmt = self.var_declaration()?;
+            Option::Some(var_stmt)
+        } else {
+            let expr_stmt = self.expression_statement()?;
+            Option::Some(expr_stmt)
+        };
+
+        let condition = if !self.check(TokenType::Semicolon) {
+            let expr = self.expression()?;
+            expr
+        } else {
+            Expr::Literal {
+                value: LiteralType::BoolValue(true),
+            }
+        };
+        self.consume(TokenType::Semicolon, "Expect ';' after loop condition.")?;
+
+        let increment = if !self.check(TokenType::RightParen) {
+            let expr = self.expression()?;
+            Option::Some(expr)
+        } else {
+            Option::None
+        };
+
+        self.consume(TokenType::RightParen, "Expected ')' after 'for' clauses.")?;
+
+        let mut body = self.statement()?;
+
+        // Synthesize syntax tree nodes that expres the semantics of the for loop
+        if let Option::Some(expr) = increment {
+            body = Stmt::Block {
+                statements: vec![
+                    body,
+                    Stmt::Expression {
+                        expression: Box::new(expr),
+                    },
+                ],
+            };
+        }
+
+        body = Stmt::While {
+            condition: Box::new(condition),
+            body: Box::new(body),
+        };
+
+        if let Option::Some(expr) = initializer {
+            body = Stmt::Block {
+                statements: vec![expr, body],
+            };
+        }
+
+        Result::Ok(body)
     }
 
     fn if_statement(&mut self) -> Result<Stmt, String> {
@@ -239,6 +311,18 @@ impl Parser {
 
         Result::Ok(Stmt::Print {
             expression: Box::new(expr),
+        })
+    }
+
+    fn while_statement(&mut self) -> Result<Stmt, String> {
+        self.consume(TokenType::LeftParen, "Expected '(' after 'while'.")?;
+        let condition = self.expression()?;
+        self.consume(TokenType::RightParen, "Expected ')' after condition")?;
+        let body = self.statement()?;
+
+        Result::Ok(Stmt::While {
+            condition: Box::new(condition),
+            body: Box::new(body),
         })
     }
 

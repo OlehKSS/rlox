@@ -45,6 +45,7 @@ impl Interpreter {
                 else_branch,
             } => self.if_statement(condition, then_branch, else_branch.as_deref()),
             Stmt::Print { expression } => self.print_statement(expression),
+            Stmt::While { condition, body } => self.while_statement(condition, body),
             Stmt::Var { name, initializer } => {
                 let value = match &initializer {
                     Option::Some(expr) => self.evaluate(expr)?,
@@ -75,6 +76,16 @@ impl Interpreter {
     fn print_statement(&mut self, expr: &Expr) -> Result<(), String> {
         let value = self.evaluate(expr)?;
         std::println!("{}", stringify(&value));
+        Result::Ok(())
+    }
+
+    fn while_statement(&mut self, condition: &Expr, body: &Stmt) -> Result<(), String> {
+        let mut cond_value = self.evaluate(condition)?;
+        while is_truthy(&cond_value) {
+            self.execute_statement(body, false)?;
+            cond_value = self.evaluate(condition)?;
+        }
+
         Result::Ok(())
     }
 
@@ -512,6 +523,66 @@ mod tests {
         assert_eq!(
             intp.environment.borrow_mut().get(&tokens[1]).unwrap(),
             LiteralType::NumberValue(-1.0)
+        );
+    }
+
+    #[test]
+    fn test_if_statement() {
+        let source = "var a = 1; if (true) { a = 2; } else { a = 3; }";
+        let mut scanner = Scanner::new(source);
+        let (tokens, _) = scanner.scan_tokens();
+        let mut parser = Parser::new(tokens.clone());
+        let statements = parser.parse().unwrap();
+        let mut intp = Interpreter::new();
+        intp.interpret(&statements, false);
+        assert_eq!(
+            intp.environment.borrow_mut().get(&tokens[1]).unwrap(),
+            LiteralType::NumberValue(2.0)
+        );
+    }
+
+    #[test]
+    fn test_if_else_statement() {
+        let source = "var a = 1; if (false) { a = 2; } else { a = 3; }";
+        let mut scanner = Scanner::new(source);
+        let (tokens, _) = scanner.scan_tokens();
+        let mut parser = Parser::new(tokens.clone());
+        let statements = parser.parse().unwrap();
+        let mut intp = Interpreter::new();
+        intp.interpret(&statements, false);
+        assert_eq!(
+            intp.environment.borrow_mut().get(&tokens[1]).unwrap(),
+            LiteralType::NumberValue(3.0)
+        );
+    }
+
+    #[test]
+    fn test_while_loop() {
+        let source = "var a = 0; while (a < 3) { a = a + 1; }";
+        let mut scanner = Scanner::new(source);
+        let (tokens, _) = scanner.scan_tokens();
+        let mut parser = Parser::new(tokens.clone());
+        let statements = parser.parse().unwrap();
+        let mut intp = Interpreter::new();
+        intp.interpret(&statements, false);
+        assert_eq!(
+            intp.environment.borrow_mut().get(&tokens[1]).unwrap(),
+            LiteralType::NumberValue(3.0)
+        );
+    }
+
+    #[test]
+    fn test_for_loop() {
+        let source = "var a = 0; for (var i = 0; i < 3; i = i + 1) { a = a + i; }";
+        let mut scanner = Scanner::new(source);
+        let (tokens, _) = scanner.scan_tokens();
+        let mut parser = Parser::new(tokens.clone());
+        let statements = parser.parse().unwrap();
+        let mut intp = Interpreter::new();
+        intp.interpret(&statements, false);
+        assert_eq!(
+            intp.environment.borrow_mut().get(&tokens[1]).unwrap(),
+            LiteralType::NumberValue(3.0)
         );
     }
 }
