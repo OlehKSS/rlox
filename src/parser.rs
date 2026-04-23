@@ -5,12 +5,21 @@ use super::scanner::{LiteralType, Token, TokenType};
 /// program -> declaration* EOF ;
 /// declaration -> varDecl | statement ;
 /// varDecl -> "var" IDENTIFIER ( "=" expression )? ";" ;
-/// statement -> exprStmt | forStmt | ifStmt | printStmt | whileStmt | block ;
+/// statement -> exprStmt
+///             | forStmt
+///             | ifStmt
+///             | printStmt
+///             | whileStmt
+///             | breakStmt
+///             | continueStmt
+///             | block ;
 /// exprStmt -> expression ";" ;
 /// forStmt -> "for" "(" varDecl | exprStmt | ";" ) expression? ";" expression? ")" statement ;
 /// ifStmt -> "if" "(" expression ")" statement ( "else" statement )? ;
 /// printStmt -> "print" expression ";" ;
 /// whileStmt -> "while" "(" expression ")" statement ;
+/// breakStmt -> "break" ";"
+/// continueStmt -> "continue" ;
 /// block -> "{" declaration* "}" ;
 /// expression -> assignment ;
 /// assignment -> IDENTIFIER "=" assignment | logic_or ;
@@ -29,6 +38,8 @@ pub enum Stmt {
     Block {
         statements: Vec<Stmt>,
     },
+    Break,
+    Continue,
     Expression {
         expression: Box<Expr>,
     },
@@ -47,6 +58,7 @@ pub enum Stmt {
     While {
         condition: Box<Expr>,
         body: Box<Stmt>,
+        increment: Option<Expr>,
     },
 }
 
@@ -145,6 +157,7 @@ fn parenthesize(name: &str, exprs: &[&Expr]) -> String {
 pub struct Parser {
     tokens: Vec<Token>,
     current: usize,
+    is_loop_open: bool,
 }
 
 impl Parser {
@@ -152,6 +165,7 @@ impl Parser {
         Parser {
             tokens: tokens,
             current: 0,
+            is_loop_open: false,
         }
     }
 
@@ -204,6 +218,12 @@ impl Parser {
     }
 
     fn statement(&mut self) -> Result<Stmt, String> {
+        if self.match_token_type(&[TokenType::Break]) {
+            return self.break_statement();
+        }
+        if self.match_token_type(&[TokenType::Continue]) {
+            return self.continue_statement();
+        }
         if self.match_token_type(&[TokenType::For]) {
             return self.for_statement();
         }
@@ -223,6 +243,24 @@ impl Parser {
         }
 
         self.expression_statement()
+    }
+
+    fn break_statement(&mut self) -> Result<Stmt, String> {
+        self.consume(TokenType::Semicolon, "Missing ';' after 'break'.")?;
+        if self.is_loop_open {
+            Result::Ok(Stmt::Break)
+        } else {
+            Result::Err("'break' outside loop.".to_string())
+        }
+    }
+
+    fn continue_statement(&mut self) -> Result<Stmt, String> {
+        self.consume(TokenType::Semicolon, "Missing ';' after 'continue'.")?;
+        if self.is_loop_open {
+            Result::Ok(Stmt::Continue)
+        } else {
+            Result::Err("'continue' is outside loop".to_string())
+        }
     }
 
     fn for_statement(&mut self) -> Result<Stmt, String> {
@@ -257,23 +295,16 @@ impl Parser {
 
         self.consume(TokenType::RightParen, "Expected ')' after 'for' clauses.")?;
 
+        let is_outer_loop_open = self.is_loop_open;
+        self.is_loop_open = true;
         let mut body = self.statement()?;
+        self.is_loop_open = is_outer_loop_open;
 
         // Synthesize syntax tree nodes that expres the semantics of the for loop
-        if let Option::Some(expr) = increment {
-            body = Stmt::Block {
-                statements: vec![
-                    body,
-                    Stmt::Expression {
-                        expression: Box::new(expr),
-                    },
-                ],
-            };
-        }
-
         body = Stmt::While {
             condition: Box::new(condition),
             body: Box::new(body),
+            increment: increment,
         };
 
         if let Option::Some(expr) = initializer {
@@ -315,14 +346,18 @@ impl Parser {
     }
 
     fn while_statement(&mut self) -> Result<Stmt, String> {
+        let is_outer_loop_open = self.is_loop_open;
+        self.is_loop_open = true;
         self.consume(TokenType::LeftParen, "Expected '(' after 'while'.")?;
         let condition = self.expression()?;
         self.consume(TokenType::RightParen, "Expected ')' after condition")?;
         let body = self.statement()?;
+        self.is_loop_open = is_outer_loop_open;
 
         Result::Ok(Stmt::While {
             condition: Box::new(condition),
             body: Box::new(body),
+            increment: Option::None,
         })
     }
 

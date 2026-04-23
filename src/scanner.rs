@@ -47,7 +47,9 @@ pub enum TokenType {
 
     // Keywords
     And,
+    Break,
     Class,
+    Continue,
     Else,
     False,
     Fun,
@@ -284,7 +286,9 @@ impl Scanner {
         let text = &self.source[self.start..self.current];
         let token_type = match text {
             "and" => TokenType::And,
+            "break" => TokenType::Break,
             "class" => TokenType::Class,
+            "continue" => TokenType::Continue,
             "else" => TokenType::Else,
             "false" => TokenType::False,
             "for" => TokenType::For,

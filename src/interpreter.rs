@@ -9,12 +9,16 @@ type LoxValue = LiteralType;
 
 pub struct Interpreter {
     environment: Rc<RefCell<Environment>>,
+    break_flag: bool,
+    continue_flag: bool,
 }
 
 impl Interpreter {
     pub fn new() -> Self {
         Interpreter {
             environment: Rc::new(RefCell::new(Environment::new())),
+            break_flag: false,
+            continue_flag: false,
         }
     }
 
@@ -31,6 +35,14 @@ impl Interpreter {
     fn execute_statement(&mut self, statement: &Stmt, repl: bool) -> Result<(), String> {
         match statement {
             Stmt::Block { statements } => self.execute_block(statements),
+            Stmt::Break => {
+                self.break_flag = true;
+                Result::Ok(())
+            }
+            Stmt::Continue => {
+                self.continue_flag = true;
+                Result::Ok(())
+            }
             Stmt::Expression { expression } => {
                 if repl {
                     self.print_statement(expression)?;
@@ -45,7 +57,11 @@ impl Interpreter {
                 else_branch,
             } => self.if_statement(condition, then_branch, else_branch.as_deref()),
             Stmt::Print { expression } => self.print_statement(expression),
-            Stmt::While { condition, body } => self.while_statement(condition, body),
+            Stmt::While {
+                condition,
+                body,
+                increment,
+            } => self.while_statement(condition, body, increment),
             Stmt::Var { name, initializer } => {
                 let value = match &initializer {
                     Option::Some(expr) => self.evaluate(expr)?,
@@ -79,10 +95,24 @@ impl Interpreter {
         Result::Ok(())
     }
 
-    fn while_statement(&mut self, condition: &Expr, body: &Stmt) -> Result<(), String> {
+    fn while_statement(
+        &mut self,
+        condition: &Expr,
+        body: &Stmt,
+        increment: &Option<Expr>,
+    ) -> Result<(), String> {
         let mut cond_value = self.evaluate(condition)?;
         while is_truthy(&cond_value) {
             self.execute_statement(body, false)?;
+            if self.break_flag {
+                self.break_flag = false;
+                return Result::Ok(());
+            }
+            // Shim allowing for-loop support
+            if let Option::Some(expr) = increment {
+                self.evaluate(expr)?;
+            }
+            self.continue_flag = false;
             cond_value = self.evaluate(condition)?;
         }
 
@@ -101,6 +131,10 @@ impl Interpreter {
             if let Result::Err(_) = &res {
                 self.environment = previous;
                 return res;
+            }
+
+            if self.break_flag || self.continue_flag {
+                break;
             }
         }
 
@@ -583,6 +617,69 @@ mod tests {
         assert_eq!(
             intp.environment.borrow_mut().get(&tokens[1]).unwrap(),
             LiteralType::NumberValue(3.0)
+        );
+    }
+
+    #[test]
+    fn test_while_loop_break() {
+        let source = "var a = 0; while (a < 3) { a = a + 1; if (a == 2) break; }";
+        let mut scanner = Scanner::new(source);
+        let (tokens, _) = scanner.scan_tokens();
+        let mut parser = Parser::new(tokens.clone());
+        let statements = parser.parse().unwrap();
+        let mut intp = Interpreter::new();
+        intp.interpret(&statements, false);
+        assert_eq!(
+            intp.environment.borrow_mut().get(&tokens[1]).unwrap(),
+            LiteralType::NumberValue(2.0)
+        );
+    }
+
+    #[test]
+    fn test_while_loop_continue() {
+        let source =
+            "var a = 0; var b = 0; while (a < 3) { a = a + 1; if (a == 2) continue; b = b + 1; }";
+        let mut scanner = Scanner::new(source);
+        let (tokens, _) = scanner.scan_tokens();
+        let mut parser = Parser::new(tokens.clone());
+        let statements = parser.parse().unwrap();
+        let mut intp = Interpreter::new();
+        intp.interpret(&statements, false);
+        assert_eq!(
+            intp.environment.borrow_mut().get(&tokens[6]).unwrap(),
+            LiteralType::NumberValue(2.0)
+        );
+    }
+
+    #[test]
+    fn test_for_loop_break() {
+        let source =
+            "var a = 0; for (var i = 0; i < 5; i = i + 1) { if (i == 3) break; a = a + 1; }";
+        let mut scanner = Scanner::new(source);
+        let (tokens, _) = scanner.scan_tokens();
+        let mut parser = Parser::new(tokens.clone());
+        let statements = parser.parse().unwrap();
+        let mut intp = Interpreter::new();
+        intp.interpret(&statements, false);
+        assert_eq!(
+            intp.environment.borrow_mut().get(&tokens[1]).unwrap(),
+            LiteralType::NumberValue(3.0)
+        );
+    }
+
+    #[test]
+    fn test_for_loop_continue() {
+        let source =
+            "var a = 0; for (var i = 0; i < 5; i = i + 1) { if (i == 3) continue; a = a + 1; }";
+        let mut scanner = Scanner::new(source);
+        let (tokens, _) = scanner.scan_tokens();
+        let mut parser = Parser::new(tokens.clone());
+        let statements = parser.parse().unwrap();
+        let mut intp = Interpreter::new();
+        intp.interpret(&statements, false);
+        assert_eq!(
+            intp.environment.borrow_mut().get(&tokens[1]).unwrap(),
+            LiteralType::NumberValue(4.0)
         );
     }
 }
