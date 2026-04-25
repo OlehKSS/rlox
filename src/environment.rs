@@ -4,6 +4,7 @@ use std::rc::Rc;
 
 use super::scanner::{LiteralType, Token};
 
+#[derive(Debug)]
 pub struct Environment {
     values: HashMap<String, LiteralType>,
     enclosing: Option<Rc<RefCell<Environment>>>,
@@ -24,8 +25,8 @@ impl Environment {
         }
     }
 
-    pub fn define(&mut self, name: &Token, value: &LiteralType) {
-        self.values.insert(name.lexeme.clone(), value.clone());
+    pub fn define(&mut self, name: &str, value: &LiteralType) {
+        self.values.insert(name.to_string(), value.clone());
     }
 
     pub fn get(&self, token: &Token) -> Result<LiteralType, String> {

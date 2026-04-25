@@ -1,24 +1,46 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use super::callable::{Callable, LoxCallable, LoxFunction, NativeFunction};
 use super::environment::Environment;
 use super::parser::{Expr, Stmt};
 use super::scanner::{LiteralType, Token, TokenType};
+use super::utility::error;
 
-type LoxValue = LiteralType;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+pub type LoxValue = LiteralType;
 
 pub struct Interpreter {
+    pub globals: Rc<RefCell<Environment>>,
     environment: Rc<RefCell<Environment>>,
     break_flag: bool,
     continue_flag: bool,
+    pub return_flag: bool,
+    pub return_value: LiteralType,
 }
 
 impl Interpreter {
     pub fn new() -> Self {
+        let mut globals = Environment::new();
+        let clock_func = Callable::Native(Rc::new(NativeFunction::new(0, || {
+            let start = SystemTime::now();
+            let since_the_epoch = start.duration_since(UNIX_EPOCH).expect("System failure");
+            let time_ms = since_the_epoch.as_millis() as f64;
+
+            Ok(LiteralType::NumberValue(time_ms))
+        })));
+        globals.define("clock", &LiteralType::Callable(clock_func));
+
+        let globals = Rc::new(RefCell::new(globals));
+
         Interpreter {
-            environment: Rc::new(RefCell::new(Environment::new())),
+            globals: globals.clone(),
+            environment: globals.clone(),
             break_flag: false,
             continue_flag: false,
+            return_flag: false,
+            return_value: LiteralType::NoneValue,
         }
     }
 
@@ -34,7 +56,12 @@ impl Interpreter {
 
     fn execute_statement(&mut self, statement: &Stmt, repl: bool) -> Result<(), String> {
         match statement {
-            Stmt::Block { statements } => self.execute_block(statements),
+            Stmt::Block { statements } => {
+                let block_env = Rc::new(RefCell::new(Environment::new_with_enclosing(
+                    self.environment.clone(),
+                )));
+                self.execute_block(statements, block_env)
+            }
             Stmt::Break => {
                 self.break_flag = true;
                 Result::Ok(())
@@ -51,12 +78,29 @@ impl Interpreter {
                 }
                 Result::Ok(())
             }
+            Stmt::Function {
+                name,
+                parameters,
+                body,
+            } => {
+                let function = Callable::Function(Rc::new(LoxFunction::new(
+                    name,
+                    parameters,
+                    body,
+                    self.environment.clone(),
+                )));
+                self.environment
+                    .borrow_mut()
+                    .define(&name.lexeme, &LoxValue::Callable(function));
+                Result::Ok(())
+            }
             Stmt::If {
                 condition,
                 then_branch,
                 else_branch,
             } => self.if_statement(condition, then_branch, else_branch.as_deref()),
             Stmt::Print { expression } => self.print_statement(expression),
+            Stmt::Return { keyword, value } => self.return_statement(keyword, value),
             Stmt::While {
                 condition,
                 body,
@@ -67,7 +111,7 @@ impl Interpreter {
                     Option::Some(expr) => self.evaluate(expr)?,
                     Option::None => LiteralType::NoneValue,
                 };
-                self.environment.borrow_mut().define(&name, &value);
+                self.environment.borrow_mut().define(&name.lexeme, &value);
                 Result::Ok(())
             }
         }
@@ -95,6 +139,12 @@ impl Interpreter {
         Result::Ok(())
     }
 
+    fn return_statement(&mut self, _keyword: &Token, value: &Expr) -> Result<(), String> {
+        self.return_value = self.evaluate(value)?;
+        self.return_flag = true;
+        Result::Ok(())
+    }
+
     fn while_statement(
         &mut self,
         condition: &Expr,
@@ -108,6 +158,9 @@ impl Interpreter {
                 self.break_flag = false;
                 return Result::Ok(());
             }
+            if self.return_flag {
+                return Result::Ok(());
+            }
             // Shim allowing for-loop support
             if let Option::Some(expr) = increment {
                 self.evaluate(expr)?;
@@ -119,11 +172,13 @@ impl Interpreter {
         Result::Ok(())
     }
 
-    fn execute_block(&mut self, statements: &Vec<Stmt>) -> Result<(), String> {
+    pub fn execute_block(
+        &mut self,
+        statements: &Vec<Stmt>,
+        environment: Rc<RefCell<Environment>>,
+    ) -> Result<(), String> {
         let previous = self.environment.clone();
-        self.environment = Rc::new(RefCell::new(Environment::new_with_enclosing(
-            previous.clone(),
-        )));
+        self.environment = environment;
 
         for stmt in statements {
             let res = self.execute_statement(stmt, false);
@@ -132,8 +187,7 @@ impl Interpreter {
                 self.environment = previous;
                 return res;
             }
-
-            if self.break_flag || self.continue_flag {
+            if self.break_flag || self.continue_flag || self.return_flag {
                 break;
             }
         }
@@ -154,6 +208,11 @@ impl Interpreter {
                 right,
                 operator,
             } => self.evaluate_binary(left, right, operator),
+            Expr::Call {
+                callee,
+                right_parenthesis,
+                arguments,
+            } => self.evaluate_call(callee, right_parenthesis, arguments),
             Expr::Grouping { expression } => self.evaluate(expression),
             Expr::Literal { value } => Result::Ok(value.clone()),
             Expr::Logical {
@@ -283,6 +342,40 @@ impl Interpreter {
             operator, left_value, right_value, operator.line
         ));
     }
+
+    fn evaluate_call(
+        &mut self,
+        callee: &Expr,
+        right_parenthesis: &Token,
+        arguments: &Vec<Expr>,
+    ) -> Result<LoxValue, String> {
+        let callee_value = self.evaluate(callee)?;
+        let mut args: Vec<LoxValue> = vec![];
+        for expr in arguments {
+            let arg_value = self.evaluate(expr)?;
+            args.push(arg_value);
+        }
+
+        if let LoxValue::Callable(function) = callee_value {
+            if arguments.len() != (function.arity() as usize) {
+                return Result::Err(error(
+                    &format!(
+                        "Expected {} arguments but got {}",
+                        function.arity(),
+                        arguments.len()
+                    ),
+                    right_parenthesis,
+                ));
+            }
+
+            return function.call(self, &args);
+        }
+
+        Result::Err(error(
+            "Can only call functions and classes.",
+            right_parenthesis,
+        ))
+    }
 }
 
 /// false and nil are falsey, and everything else is truthy
@@ -314,6 +407,7 @@ fn stringify(lox_value: &LoxValue) -> String {
         }
         LoxValue::BoolValue(value) => value.to_string(),
         LoxValue::StringValue(value) => value.clone(),
+        LoxValue::Callable(callable) => callable.to_string(),
     }
 }
 
@@ -511,7 +605,7 @@ mod tests {
 
         intp.environment
             .borrow_mut()
-            .define(&var_a, &LiteralType::NumberValue(1.0));
+            .define(&var_a.lexeme, &LiteralType::NumberValue(1.0));
 
         let var_a_expr = Expr::Variable {
             name: var_a.clone(),
@@ -680,6 +774,74 @@ mod tests {
         assert_eq!(
             intp.environment.borrow_mut().get(&tokens[1]).unwrap(),
             LiteralType::NumberValue(4.0)
+        );
+    }
+
+    #[test]
+    fn test_function_call_and_return() {
+        let source = "fun add(a, b) { return a + b; } var result = add(3, 4);";
+        let mut scanner = Scanner::new(source);
+        let (tokens, _) = scanner.scan_tokens();
+        let mut parser = Parser::new(tokens.clone());
+        let statements = parser.parse().unwrap();
+        let mut intp = Interpreter::new();
+        intp.interpret(&statements, false);
+        
+        let token_result = Token { ttype: TokenType::Identifier, lexeme: "result".to_string(), literal: LiteralType::NoneValue, line: 1 };
+        assert_eq!(
+            intp.environment.borrow().get(&token_result).unwrap(),
+            LiteralType::NumberValue(7.0)
+        );
+    }
+
+    #[test]
+    fn test_function_closure() {
+        let source = "var a = 1; fun makeAdder() { var b = 2; fun add(c) { return a + b + c; } return add; } var adder = makeAdder(); var result = adder(3);";
+        let mut scanner = Scanner::new(source);
+        let (tokens, _) = scanner.scan_tokens();
+        let mut parser = Parser::new(tokens.clone());
+        let statements = parser.parse().unwrap();
+        let mut intp = Interpreter::new();
+        intp.interpret(&statements, false);
+        
+        let token_result = Token { ttype: TokenType::Identifier, lexeme: "result".to_string(), literal: LiteralType::NoneValue, line: 1 };
+        assert_eq!(
+            intp.environment.borrow().get(&token_result).unwrap(),
+            LiteralType::NumberValue(6.0)
+        );
+    }
+
+    #[test]
+    fn test_function_return_inside_loop() {
+        let source = "fun findTarget(target) { var i = 0; while (i < 10) { if (i == target) { return i; } i = i + 1; } return -1; } var result = findTarget(5);";
+        let mut scanner = Scanner::new(source);
+        let (tokens, _) = scanner.scan_tokens();
+        let mut parser = Parser::new(tokens.clone());
+        let statements = parser.parse().unwrap();
+        let mut intp = Interpreter::new();
+        intp.interpret(&statements, false);
+        
+        let token_result = Token { ttype: TokenType::Identifier, lexeme: "result".to_string(), literal: LiteralType::NoneValue, line: 1 };
+        assert_eq!(
+            intp.environment.borrow().get(&token_result).unwrap(),
+            LiteralType::NumberValue(5.0)
+        );
+    }
+
+    #[test]
+    fn test_function_recursive() {
+        let source = "fun fib(n) { if (n <= 1) return n; return fib(n - 2) + fib(n - 1); } var result = fib(5);";
+        let mut scanner = Scanner::new(source);
+        let (tokens, _) = scanner.scan_tokens();
+        let mut parser = Parser::new(tokens.clone());
+        let statements = parser.parse().unwrap();
+        let mut intp = Interpreter::new();
+        intp.interpret(&statements, false);
+        
+        let token_result = Token { ttype: TokenType::Identifier, lexeme: "result".to_string(), literal: LiteralType::NoneValue, line: 1 };
+        assert_eq!(
+            intp.environment.borrow().get(&token_result).unwrap(),
+            LiteralType::NumberValue(5.0)
         );
     }
 }

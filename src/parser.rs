@@ -1,36 +1,45 @@
 use core::fmt;
 
 use super::scanner::{LiteralType, Token, TokenType};
+use super::utility::error;
 
-/// program -> declaration* EOF ;
-/// declaration -> varDecl | statement ;
-/// varDecl -> "var" IDENTIFIER ( "=" expression )? ";" ;
-/// statement -> exprStmt
+/// program      -> declaration* EOF ;
+/// declaration  -> funDecl | varDecl | statement ;
+/// funDecl      -> "fun" function;
+/// function     -> IDENTIFIER "(" parameters? ")" block ;
+/// parameters   -> IDENTIFIER ( "," IDENTIFIER )* ;
+/// varDecl      -> "var" IDENTIFIER ( "=" expression )? ";" ;
+/// statement    -> exprStmt
 ///             | forStmt
 ///             | ifStmt
 ///             | printStmt
 ///             | whileStmt
 ///             | breakStmt
 ///             | continueStmt
+///             | returnStmt
 ///             | block ;
-/// exprStmt -> expression ";" ;
-/// forStmt -> "for" "(" varDecl | exprStmt | ";" ) expression? ";" expression? ")" statement ;
-/// ifStmt -> "if" "(" expression ")" statement ( "else" statement )? ;
-/// printStmt -> "print" expression ";" ;
-/// whileStmt -> "while" "(" expression ")" statement ;
-/// breakStmt -> "break" ";"
+/// exprStmt     -> expression ";" ;
+/// forStmt      -> "for" "(" varDecl | exprStmt | ";" ) expression? ";" expression? ")" statement ;
+/// ifStmt       -> "if" "(" expression ")" statement ( "else" statement )? ;
+/// printStmt    -> "print" expression ";" ;
+/// whileStmt    -> "while" "(" expression ")" statement ;
+/// breakStmt    -> "break" ";"
 /// continueStmt -> "continue" ;
-/// block -> "{" declaration* "}" ;
-/// expression -> assignment ;
-/// assignment -> IDENTIFIER "=" assignment | logic_or ;
-/// logic_or -> logic_and ( "or" logic_and )* ;
-/// logic_and -> equality ( "and" equality )* ;
-/// equality   -> comparison ( ( "!=" | "==" ) comparison )* ;
-/// comparison -> term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
-/// term       -> factor ( ( "-" | "+" ) factor )* ;
-/// factor     -> unary ( ( "/" | "*" ) unary )* ;
-/// unary      -> ( "!" | "-" ) unary | primary ;
-/// primary    -> NUMBER | STRING | "true" | "false" | "nil" | "(" expression ")" | IDENTIFIER ;
+/// returnStmt   -> "return" expression? ";" ;
+/// block        -> "{" declaration* "}" ;
+///
+/// expression   -> assignment ;
+/// assignment   -> IDENTIFIER "=" assignment | logic_or ;
+/// logic_or     -> logic_and ( "or" logic_and )* ;
+/// logic_and    -> equality ( "and" equality )* ;
+/// equality     -> comparison ( ( "!=" | "==" ) comparison )* ;
+/// comparison   -> term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
+/// term         -> factor ( ( "-" | "+" ) factor )* ;
+/// factor       -> unary ( ( "/" | "*" ) unary )* ;
+/// unary        -> ( "!" | "-" ) unary | call ;
+/// call         -> primary ( "(" arguments? ")" )* ;
+/// arguments    -> expression ( "," expression )* ;
+/// primary      -> NUMBER | STRING | "true" | "false" | "nil" | "(" expression ")" | IDENTIFIER ;
 
 /// Statements
 #[derive(Debug, Clone)]
@@ -43,6 +52,11 @@ pub enum Stmt {
     Expression {
         expression: Box<Expr>,
     },
+    Function {
+        name: Token,
+        parameters: Vec<Token>,
+        body: Vec<Stmt>,
+    },
     If {
         condition: Box<Expr>,
         then_branch: Box<Stmt>,
@@ -50,6 +64,10 @@ pub enum Stmt {
     },
     Print {
         expression: Box<Expr>,
+    },
+    Return {
+        keyword: Token,
+        value: Box<Expr>,
     },
     Var {
         name: Token,
@@ -73,6 +91,11 @@ pub enum Expr {
         left: Box<Expr>,
         right: Box<Expr>,
         operator: Token,
+    },
+    Call {
+        callee: Box<Expr>,
+        right_parenthesis: Token,
+        arguments: Vec<Expr>,
     },
     Grouping {
         expression: Box<Expr>,
@@ -107,6 +130,17 @@ impl fmt::Display for Expr {
             } => {
                 let subexpr = parenthesize(&operator.lexeme, &[&left, &right]);
                 write!(f, "{}", subexpr)
+            }
+            Expr::Call {
+                callee, arguments, ..
+            } => {
+                let args_str = arguments
+                    .iter()
+                    .map(|arg| arg.to_string())
+                    .collect::<Vec<String>>()
+                    .join(", ");
+
+                write!(f, "{}({})", callee, args_str)
             }
             Expr::Grouping { expression } => {
                 let subexpr = parenthesize("group", &[&expression]);
@@ -188,12 +222,55 @@ impl Parser {
     }
 
     fn declaration(&mut self) -> Result<Stmt, String> {
+        if self.match_token_type(&[TokenType::Fun]) {
+            return self.function_declaration("function");
+        }
         if self.match_token_type(&[TokenType::Var]) {
             return self.var_declaration();
         }
 
         self.statement()
         // TODO: synchronize() when errors happen
+    }
+
+    fn function_declaration(&mut self, kind: &str) -> Result<Stmt, String> {
+        let name = self
+            .consume(TokenType::Identifier, &format!("Expected {kind} name."))?
+            .clone();
+        self.consume(
+            TokenType::LeftParen,
+            &format!("Expected '(' after {kind} name."),
+        )?;
+
+        let mut parameters: Vec<Token> = vec![];
+
+        if !self.check(TokenType::RightParen) {
+            loop {
+                if parameters.len() >= 255 {
+                    return Result::Err("Cannot have more than 255 parameters.".to_string());
+                }
+
+                let param_name = self.consume(TokenType::Identifier, "Expected parameter name.")?;
+                parameters.push(param_name.clone());
+
+                if !self.match_token_type(&[TokenType::Comma]) {
+                    break;
+                }
+            }
+        }
+
+        self.consume(TokenType::RightParen, "Expected '(' after parameters.")?;
+        self.consume(
+            TokenType::LeftBrace,
+            &format!("Expected '{{' before {kind} body."),
+        )?;
+        let body = self.block_statement()?;
+
+        Result::Ok(Stmt::Function {
+            name: name,
+            parameters,
+            body,
+        })
     }
 
     fn var_declaration(&mut self) -> Result<Stmt, String> {
@@ -232,6 +309,9 @@ impl Parser {
         }
         if self.match_token_type(&[TokenType::Print]) {
             return self.print_statement();
+        }
+        if self.match_token_type(&[TokenType::Return]) {
+            return self.return_statement();
         }
         if self.match_token_type(&[TokenType::While]) {
             return self.while_statement();
@@ -345,6 +425,24 @@ impl Parser {
         })
     }
 
+    fn return_statement(&mut self) -> Result<Stmt, String> {
+        let keyword = self.previous().clone();
+        let value = if self.check(TokenType::Semicolon) {
+            Expr::Literal {
+                value: LiteralType::NoneValue,
+            }
+        } else {
+            self.expression()?
+        };
+
+        self.consume(TokenType::Semicolon, "Expected ';' after return values")?;
+
+        Result::Ok(Stmt::Return {
+            keyword,
+            value: Box::new(value),
+        })
+    }
+
     fn while_statement(&mut self) -> Result<Stmt, String> {
         let is_outer_loop_open = self.is_loop_open;
         self.is_loop_open = true;
@@ -401,7 +499,10 @@ impl Parser {
                 });
             }
 
-            return Result::Err(self.error("Invalid assignment target.", &self.tokens[equals_pos]));
+            return Result::Err(error(
+                "Invalid assignment target.",
+                &self.tokens[equals_pos],
+            ));
         }
 
         Result::Ok(expr)
@@ -517,8 +618,50 @@ impl Parser {
                 operator,
             })
         } else {
-            self.primary()
+            self.call()
         }
+    }
+
+    fn call(&mut self) -> Result<Expr, String> {
+        let mut expr = self.primary()?;
+
+        loop {
+            if self.match_token_type(&[TokenType::LeftParen]) {
+                expr = self.finish_call(&expr)?;
+            } else {
+                break;
+            }
+        }
+
+        Result::Ok(expr)
+    }
+
+    fn finish_call(&mut self, callee: &Expr) -> Result<Expr, String> {
+        let mut arguments: Vec<Expr> = Vec::new();
+
+        if !self.check(TokenType::RightParen) {
+            loop {
+                if arguments.len() >= 255 {
+                    return Result::Err("Cannot have more than 255 arguments.".to_string());
+                }
+
+                let expr = self.expression()?;
+                arguments.push(expr);
+
+                if !self.match_token_type(&[TokenType::Comma]) {
+                    break;
+                }
+            }
+        }
+
+        let right_parenthesis =
+            self.consume(TokenType::RightParen, "Expected ')' after arguments.")?;
+
+        Result::Ok(Expr::Call {
+            callee: Box::new(callee.clone()),
+            right_parenthesis: right_parenthesis.clone(),
+            arguments,
+        })
     }
 
     fn primary(&mut self) -> Result<Expr, String> {
@@ -556,7 +699,7 @@ impl Parser {
         }
 
         self.advance();
-        Result::Err(self.error(
+        Result::Err(error(
             &format!("Unexpected primary token {:?}", self.previous().ttype),
             self.previous(),
         ))
@@ -586,7 +729,7 @@ impl Parser {
             return Result::Ok(&self.advance());
         }
 
-        Result::Err(self.error(message, &self.peek()))
+        Result::Err(error(message, &self.peek()))
     }
 
     fn advance(&mut self) -> &Token {
@@ -611,17 +754,6 @@ impl Parser {
 
     fn is_at_end(&self) -> bool {
         self.peek().ttype == TokenType::Eof
-    }
-
-    fn error(&self, message: &str, token: &Token) -> String {
-        if token.ttype == TokenType::Eof {
-            format!("[line {}] Error at end: {message}", token.line)
-        } else {
-            format!(
-                "[line {}] Error at '{}': {message}",
-                token.line, token.lexeme
-            )
-        }
     }
 }
 

@@ -1,5 +1,9 @@
 use std::fmt;
 
+use crate::callable::LoxCallable;
+
+use super::callable::Callable;
+
 pub struct Scanner {
     source: String,
     tokens: Vec<Token>,
@@ -73,6 +77,7 @@ pub enum LiteralType {
     StringValue(String),
     NumberValue(f64),
     BoolValue(bool),
+    Callable(Callable),
     NoneValue,
 }
 
@@ -331,6 +336,9 @@ impl fmt::Display for LiteralType {
             }
             LiteralType::BoolValue(value) => {
                 write!(f, "{}", value)
+            }
+            LiteralType::Callable(callable) => {
+                write!(f, "{}", callable.to_string())
             }
             LiteralType::NoneValue => {
                 write!(f, "")
