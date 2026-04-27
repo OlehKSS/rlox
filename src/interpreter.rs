@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use super::callable::{Callable, LoxCallable, LoxFunction, NativeFunction};
@@ -12,12 +13,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub type LoxValue = LiteralType;
 
 pub struct Interpreter {
+    pub return_flag: bool,
+    pub return_value: LiteralType,
     pub globals: Rc<RefCell<Environment>>,
     environment: Rc<RefCell<Environment>>,
     break_flag: bool,
     continue_flag: bool,
-    pub return_flag: bool,
-    pub return_value: LiteralType,
+    locals: HashMap<usize, usize>, // Map Expr.id to its depth
 }
 
 impl Interpreter {
@@ -41,6 +43,7 @@ impl Interpreter {
             continue_flag: false,
             return_flag: false,
             return_value: LiteralType::NoneValue,
+            locals: HashMap::new(),
         }
     }
 
@@ -52,6 +55,10 @@ impl Interpreter {
                 std::eprintln!("Runtime error: {}", runtime_error);
             }
         }
+    }
+
+    pub fn resolve(&mut self, locals: HashMap<usize, usize>) {
+        self.locals = locals;
     }
 
     fn execute_statement(&mut self, statement: &Stmt, repl: bool) -> Result<(), String> {
@@ -198,11 +205,7 @@ impl Interpreter {
 
     fn evaluate(&mut self, expr: &Expr) -> Result<LoxValue, String> {
         match expr {
-            Expr::Assign { name, value } => {
-                let rvalue = self.evaluate(value)?;
-                self.environment.borrow_mut().assign(name, &rvalue)?;
-                Result::Ok(rvalue)
-            }
+            Expr::Assign { id, name, value } => self.evaluate_assign(*id, name, value),
             Expr::Binary {
                 left,
                 right,
@@ -221,8 +224,26 @@ impl Interpreter {
                 operator,
             } => self.evaluate_logical(left, right, operator),
             Expr::Unary { right, operator } => self.evaluate_unary(right, operator),
-            Expr::Variable { name } => self.environment.borrow().get(&name),
+            Expr::Variable { id, name } => self.look_up_variable(name, *id),
         }
+    }
+
+    fn evaluate_assign(
+        &mut self,
+        id: usize,
+        name: &Token,
+        value: &Expr,
+    ) -> Result<LoxValue, String> {
+        let rvalue = self.evaluate(value)?;
+        let distance = self.locals.get(&id);
+
+        if let Option::Some(d) = distance {
+            self.environment.borrow_mut().assign_at(name, &rvalue, *d)?;
+        } else {
+            self.globals.borrow_mut().assign(name, &rvalue)?;
+        }
+
+        Result::Ok(rvalue)
     }
 
     fn evaluate_logical(
@@ -375,6 +396,14 @@ impl Interpreter {
             "Can only call functions and classes.",
             right_parenthesis,
         ))
+    }
+
+    fn look_up_variable(&self, name: &Token, id: usize) -> Result<LiteralType, String> {
+        if let Option::Some(distance) = self.locals.get(&id) {
+            self.environment.borrow().get_at(name, *distance)
+        } else {
+            self.globals.borrow().get(name)
+        }
     }
 }
 
@@ -608,6 +637,7 @@ mod tests {
             .define(&var_a.lexeme, &LiteralType::NumberValue(1.0));
 
         let var_a_expr = Expr::Variable {
+            id: 0,
             name: var_a.clone(),
         };
 
@@ -620,6 +650,7 @@ mod tests {
             value: LiteralType::NumberValue(42.0),
         });
         let assign_expr = Expr::Assign {
+            id: 1,
             name: var_a,
             value: literal,
         };
@@ -645,7 +676,11 @@ mod tests {
         let mut parser = Parser::new(tokens.clone());
         let statements = parser.parse().unwrap();
 
+        let resolver = crate::resolver::Resolver::new();
+        let locals = resolver.resolve(&statements).unwrap();
+
         let mut intp = Interpreter::new();
+        intp.resolve(locals);
         intp.interpret(&statements, false);
 
         assert_eq!(
@@ -661,7 +696,10 @@ mod tests {
         let (tokens, _) = scanner.scan_tokens();
         let mut parser = Parser::new(tokens.clone());
         let statements = parser.parse().unwrap();
+        let resolver = crate::resolver::Resolver::new();
+        let locals = resolver.resolve(&statements).unwrap();
         let mut intp = Interpreter::new();
+        intp.resolve(locals);
         intp.interpret(&statements, false);
         assert_eq!(
             intp.environment.borrow_mut().get(&tokens[1]).unwrap(),
@@ -676,7 +714,10 @@ mod tests {
         let (tokens, _) = scanner.scan_tokens();
         let mut parser = Parser::new(tokens.clone());
         let statements = parser.parse().unwrap();
+        let resolver = crate::resolver::Resolver::new();
+        let locals = resolver.resolve(&statements).unwrap();
         let mut intp = Interpreter::new();
+        intp.resolve(locals);
         intp.interpret(&statements, false);
         assert_eq!(
             intp.environment.borrow_mut().get(&tokens[1]).unwrap(),
@@ -691,7 +732,10 @@ mod tests {
         let (tokens, _) = scanner.scan_tokens();
         let mut parser = Parser::new(tokens.clone());
         let statements = parser.parse().unwrap();
+        let resolver = crate::resolver::Resolver::new();
+        let locals = resolver.resolve(&statements).unwrap();
         let mut intp = Interpreter::new();
+        intp.resolve(locals);
         intp.interpret(&statements, false);
         assert_eq!(
             intp.environment.borrow_mut().get(&tokens[1]).unwrap(),
@@ -706,7 +750,10 @@ mod tests {
         let (tokens, _) = scanner.scan_tokens();
         let mut parser = Parser::new(tokens.clone());
         let statements = parser.parse().unwrap();
+        let resolver = crate::resolver::Resolver::new();
+        let locals = resolver.resolve(&statements).unwrap();
         let mut intp = Interpreter::new();
+        intp.resolve(locals);
         intp.interpret(&statements, false);
         assert_eq!(
             intp.environment.borrow_mut().get(&tokens[1]).unwrap(),
@@ -721,7 +768,10 @@ mod tests {
         let (tokens, _) = scanner.scan_tokens();
         let mut parser = Parser::new(tokens.clone());
         let statements = parser.parse().unwrap();
+        let resolver = crate::resolver::Resolver::new();
+        let locals = resolver.resolve(&statements).unwrap();
         let mut intp = Interpreter::new();
+        intp.resolve(locals);
         intp.interpret(&statements, false);
         assert_eq!(
             intp.environment.borrow_mut().get(&tokens[1]).unwrap(),
@@ -737,7 +787,10 @@ mod tests {
         let (tokens, _) = scanner.scan_tokens();
         let mut parser = Parser::new(tokens.clone());
         let statements = parser.parse().unwrap();
+        let resolver = crate::resolver::Resolver::new();
+        let locals = resolver.resolve(&statements).unwrap();
         let mut intp = Interpreter::new();
+        intp.resolve(locals);
         intp.interpret(&statements, false);
         assert_eq!(
             intp.environment.borrow_mut().get(&tokens[6]).unwrap(),
@@ -753,7 +806,10 @@ mod tests {
         let (tokens, _) = scanner.scan_tokens();
         let mut parser = Parser::new(tokens.clone());
         let statements = parser.parse().unwrap();
+        let resolver = crate::resolver::Resolver::new();
+        let locals = resolver.resolve(&statements).unwrap();
         let mut intp = Interpreter::new();
+        intp.resolve(locals);
         intp.interpret(&statements, false);
         assert_eq!(
             intp.environment.borrow_mut().get(&tokens[1]).unwrap(),
@@ -769,7 +825,10 @@ mod tests {
         let (tokens, _) = scanner.scan_tokens();
         let mut parser = Parser::new(tokens.clone());
         let statements = parser.parse().unwrap();
+        let resolver = crate::resolver::Resolver::new();
+        let locals = resolver.resolve(&statements).unwrap();
         let mut intp = Interpreter::new();
+        intp.resolve(locals);
         intp.interpret(&statements, false);
         assert_eq!(
             intp.environment.borrow_mut().get(&tokens[1]).unwrap(),
@@ -784,10 +843,18 @@ mod tests {
         let (tokens, _) = scanner.scan_tokens();
         let mut parser = Parser::new(tokens.clone());
         let statements = parser.parse().unwrap();
+        let resolver = crate::resolver::Resolver::new();
+        let locals = resolver.resolve(&statements).unwrap();
         let mut intp = Interpreter::new();
+        intp.resolve(locals);
         intp.interpret(&statements, false);
-        
-        let token_result = Token { ttype: TokenType::Identifier, lexeme: "result".to_string(), literal: LiteralType::NoneValue, line: 1 };
+
+        let token_result = Token {
+            ttype: TokenType::Identifier,
+            lexeme: "result".to_string(),
+            literal: LiteralType::NoneValue,
+            line: 1,
+        };
         assert_eq!(
             intp.environment.borrow().get(&token_result).unwrap(),
             LiteralType::NumberValue(7.0)
@@ -801,10 +868,18 @@ mod tests {
         let (tokens, _) = scanner.scan_tokens();
         let mut parser = Parser::new(tokens.clone());
         let statements = parser.parse().unwrap();
+        let resolver = crate::resolver::Resolver::new();
+        let locals = resolver.resolve(&statements).unwrap();
         let mut intp = Interpreter::new();
+        intp.resolve(locals);
         intp.interpret(&statements, false);
-        
-        let token_result = Token { ttype: TokenType::Identifier, lexeme: "result".to_string(), literal: LiteralType::NoneValue, line: 1 };
+
+        let token_result = Token {
+            ttype: TokenType::Identifier,
+            lexeme: "result".to_string(),
+            literal: LiteralType::NoneValue,
+            line: 1,
+        };
         assert_eq!(
             intp.environment.borrow().get(&token_result).unwrap(),
             LiteralType::NumberValue(6.0)
@@ -818,10 +893,18 @@ mod tests {
         let (tokens, _) = scanner.scan_tokens();
         let mut parser = Parser::new(tokens.clone());
         let statements = parser.parse().unwrap();
+        let resolver = crate::resolver::Resolver::new();
+        let locals = resolver.resolve(&statements).unwrap();
         let mut intp = Interpreter::new();
+        intp.resolve(locals);
         intp.interpret(&statements, false);
-        
-        let token_result = Token { ttype: TokenType::Identifier, lexeme: "result".to_string(), literal: LiteralType::NoneValue, line: 1 };
+
+        let token_result = Token {
+            ttype: TokenType::Identifier,
+            lexeme: "result".to_string(),
+            literal: LiteralType::NoneValue,
+            line: 1,
+        };
         assert_eq!(
             intp.environment.borrow().get(&token_result).unwrap(),
             LiteralType::NumberValue(5.0)
@@ -835,13 +918,107 @@ mod tests {
         let (tokens, _) = scanner.scan_tokens();
         let mut parser = Parser::new(tokens.clone());
         let statements = parser.parse().unwrap();
+        let resolver = crate::resolver::Resolver::new();
+        let locals = resolver.resolve(&statements).unwrap();
         let mut intp = Interpreter::new();
+        intp.resolve(locals);
         intp.interpret(&statements, false);
-        
-        let token_result = Token { ttype: TokenType::Identifier, lexeme: "result".to_string(), literal: LiteralType::NoneValue, line: 1 };
+
+        let token_result = Token {
+            ttype: TokenType::Identifier,
+            lexeme: "result".to_string(),
+            literal: LiteralType::NoneValue,
+            line: 1,
+        };
         assert_eq!(
             intp.environment.borrow().get(&token_result).unwrap(),
             LiteralType::NumberValue(5.0)
+        );
+    }
+
+    #[test]
+    fn test_closure_lexical_scoping() {
+        let source = r#"
+            var a = "global";
+            var result1;
+            var result2;
+            {
+                fun showA() {
+                    return a;
+                }
+                result1 = showA();
+                var a = "block";
+                print a;
+                result2 = showA();
+            }
+        "#;
+        let mut scanner = Scanner::new(source);
+        let (tokens, _) = scanner.scan_tokens();
+        let mut parser = Parser::new(tokens.clone());
+        let statements = parser.parse().unwrap();
+        let resolver = crate::resolver::Resolver::new();
+        let locals = resolver.resolve(&statements).unwrap();
+        let mut intp = Interpreter::new();
+        intp.resolve(locals);
+        intp.interpret(&statements, false);
+
+        let token_result1 = Token {
+            ttype: TokenType::Identifier,
+            lexeme: "result1".to_string(),
+            literal: LiteralType::NoneValue,
+            line: 1,
+        };
+        let token_result2 = Token {
+            ttype: TokenType::Identifier,
+            lexeme: "result2".to_string(),
+            literal: LiteralType::NoneValue,
+            line: 1,
+        };
+        assert_eq!(
+            intp.environment.borrow().get(&token_result1).unwrap(),
+            LiteralType::StringValue("global".to_string())
+        );
+        assert_eq!(
+            intp.environment.borrow().get(&token_result2).unwrap(),
+            LiteralType::StringValue("global".to_string())
+        );
+    }
+
+    #[test]
+    fn test_closure_variable_assignment() {
+        let source = r#"
+            var globalSet;
+            var globalGet;
+            fun main() {
+                var a = "initial";
+                fun set() { a = "updated"; }
+                fun get() { return a; }
+                globalSet = set;
+                globalGet = get;
+            }
+            main();
+            globalSet();
+            var result = globalGet();
+        "#;
+        let mut scanner = Scanner::new(source);
+        let (tokens, _) = scanner.scan_tokens();
+        let mut parser = Parser::new(tokens.clone());
+        let statements = parser.parse().unwrap();
+        let resolver = crate::resolver::Resolver::new();
+        let locals = resolver.resolve(&statements).unwrap();
+        let mut intp = Interpreter::new();
+        intp.resolve(locals);
+        intp.interpret(&statements, false);
+
+        let token_result = Token {
+            ttype: TokenType::Identifier,
+            lexeme: "result".to_string(),
+            literal: LiteralType::NoneValue,
+            line: 1,
+        };
+        assert_eq!(
+            intp.environment.borrow().get(&token_result).unwrap(),
+            LiteralType::StringValue("updated".to_string())
         );
     }
 }

@@ -84,6 +84,7 @@ pub enum Stmt {
 #[derive(Debug, Clone)]
 pub enum Expr {
     Assign {
+        id: usize,
         name: Token,
         value: Box<Expr>,
     },
@@ -113,6 +114,7 @@ pub enum Expr {
         operator: Token,
     },
     Variable {
+        id: usize,
         name: Token,
     },
 }
@@ -120,7 +122,7 @@ pub enum Expr {
 impl fmt::Display for Expr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match &self {
-            Expr::Assign { name, value } => {
+            Expr::Assign { name, value, .. } => {
                 write!(f, "{} = {}", name.lexeme, value.to_string())
             }
             Expr::Binary {
@@ -165,7 +167,7 @@ impl fmt::Display for Expr {
                 let subexpr = parenthesize(&operator.lexeme, &[&right]);
                 write!(f, "{}", subexpr)
             }
-            Expr::Variable { name } => {
+            Expr::Variable { name, .. } => {
                 write!(f, "var {}", name.lexeme)
             }
         }
@@ -192,6 +194,7 @@ pub struct Parser {
     tokens: Vec<Token>,
     current: usize,
     is_loop_open: bool,
+    next_id: usize,
 }
 
 impl Parser {
@@ -200,6 +203,7 @@ impl Parser {
             tokens: tokens,
             current: 0,
             is_loop_open: false,
+            next_id: 0,
         }
     }
 
@@ -492,8 +496,9 @@ impl Parser {
             let equals_pos = self.previous_index();
             let value = self.assignment()?;
 
-            if let Expr::Variable { name } = expr {
+            if let Expr::Variable { name, .. } = expr {
                 return Result::Ok(Expr::Assign {
+                    id: self.get_next_id(),
                     name: name,
                     value: Box::new(value),
                 });
@@ -687,6 +692,7 @@ impl Parser {
         }
         if self.match_token_type(&[TokenType::Identifier]) {
             return Result::Ok(Expr::Variable {
+                id: self.get_next_id(),
                 name: self.previous().clone(),
             });
         }
@@ -754,6 +760,12 @@ impl Parser {
 
     fn is_at_end(&self) -> bool {
         self.peek().ttype == TokenType::Eof
+    }
+
+    fn get_next_id(&mut self) -> usize {
+        let id = self.next_id;
+        self.next_id += 1;
+        id
     }
 }
 

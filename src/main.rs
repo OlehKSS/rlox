@@ -2,6 +2,7 @@ mod callable;
 mod environment;
 mod interpreter;
 mod parser;
+mod resolver;
 mod scanner;
 mod utility;
 
@@ -11,6 +12,7 @@ use std::io::{self, Write};
 
 use interpreter::Interpreter;
 use parser::Parser;
+use resolver::Resolver;
 use scanner::Scanner;
 
 pub const EXIT_USAGE: i32 = 64;
@@ -113,21 +115,28 @@ impl Lox {
         let parse_result = parser.parse();
 
         if let Result::Err(error_messages) = parse_result {
-            for emsg in &error_messages {
-                eprintln!("{}", emsg);
-            }
+            self.report_errors(&error_messages);
             return;
         }
 
-        self.interpreter.interpret(&parse_result.unwrap(), repl);
+        let statements = parse_result.unwrap();
+        let resolver = Resolver::new();
+
+        match resolver.resolve(&statements) {
+            Ok(locals) => self.interpreter.resolve(locals),
+            Err(error_messages) => {
+                self.report_errors(&error_messages);
+                return;
+            }
+        }
+
+        self.interpreter.interpret(&statements, repl);
     }
 
-    fn error(&mut self, line: i64, message: &str) {
-        self.report(line, "", message);
-    }
-
-    fn report(&mut self, line: i64, source: &str, message: &str) {
-        println!("[line {line}] Error {source}: {message}");
-        self.had_error = true;
+    fn report_errors(&mut self, error_messages: &Vec<String>) {
+        for emsg in error_messages {
+            eprintln!("{}", emsg);
+        }
+        self.had_error = error_messages.is_empty();
     }
 }
