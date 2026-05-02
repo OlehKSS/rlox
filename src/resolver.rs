@@ -11,11 +11,26 @@ struct VariableState {
     pub used: bool,
 }
 
+#[derive(Debug, Clone)]
+enum ClassType {
+    None,
+    Class,
+}
+
+#[derive(Debug, Clone)]
+enum FunctionType {
+    None,
+    Function,
+    Method,
+}
+
 // Semantic analysis pass
 pub struct Resolver {
     scopes: Vec<HashMap<String, VariableState>>,
     locals: HashMap<usize, usize>,
     errors: Vec<String>,
+    current_class: ClassType,
+    current_function: FunctionType,
 }
 
 impl Resolver {
@@ -24,6 +39,8 @@ impl Resolver {
             scopes: vec![],
             locals: HashMap::new(),
             errors: vec![],
+            current_class: ClassType::None,
+            current_function: FunctionType::None,
         }
     }
 
@@ -70,18 +87,14 @@ impl Resolver {
                 name,
                 parameters,
                 body,
-            } => {
-                self.declare(name);
-                self.define(name);
-                self.resolve_function(parameters, body);
-            }
+            } => self.resolve_function(name, parameters, body),
             Stmt::If {
                 condition,
                 then_branch,
                 else_branch,
             } => self.resolve_if_stmt(condition, then_branch, else_branch.as_deref()),
             Stmt::Print { expression } => self.resolve_expr(expression),
-            Stmt::Return { value, .. } => self.resolve_expr(value),
+            Stmt::Return { keyword, value } => self.resolve_return_stmt(keyword, value),
             Stmt::Var { name, initializer } => {
                 // Split declaration and definition of variables to prevent
                 // referencing a variable in its initializer
@@ -117,17 +130,37 @@ impl Resolver {
     }
 
     fn resolve_class(&mut self, name: &Token, methods: &Vec<Stmt>) {
+        let enclosing_class = self.current_class.clone();
+        self.current_class = ClassType::Class;
         self.declare(name);
         self.define(name);
 
+        self.begin_scope();
+        self.scopes.last_mut().unwrap().insert(
+            "this".to_string(),
+            VariableState {
+                name: name.clone(), // Dummy token for this
+                defined: true,
+                used: true,
+            },
+        );
+
         for stmt in methods {
-            if matches!(stmt, Stmt::Function { .. }) {
-                // TODO: Is it enough? Java Lox is different, see p. 192
-                self.resolve_stmt(stmt);
+            if let Stmt::Function {
+                parameters, body, ..
+            } = stmt
+            {
+                let enclosing_ftype = self.current_function.clone();
+                self.current_function = FunctionType::Method;
+                self.resolve_function_body(parameters, body);
+                self.current_function = enclosing_ftype;
             } else {
                 panic!("Class declaration can contain only methods.")
             }
         }
+
+        self.end_scope();
+        self.current_class = enclosing_class;
     }
 
     fn resolve_if_stmt(
@@ -144,6 +177,15 @@ impl Resolver {
         }
     }
 
+    fn resolve_return_stmt(&mut self, keyword: &Token, value: &Expr) {
+        if matches!(self.current_function, FunctionType::None) {
+            self.errors
+                .push(error("Cannot return from top-level code.", keyword));
+        }
+
+        self.resolve_expr(value);
+    }
+
     fn resolve_expr(&mut self, expr: &Expr) {
         match expr {
             Expr::Assign { id, name, value } => self.resolve_assign_expr(*id, name, value),
@@ -154,9 +196,7 @@ impl Resolver {
             Expr::Call {
                 callee, arguments, ..
             } => self.resolve_call_expr(callee, arguments),
-            Expr::Get { object , ..} => {
-                self.resolve_expr(object)
-            }
+            Expr::Get { object, .. } => self.resolve_expr(object),
             Expr::Grouping { expression } => self.resolve_expr(expression),
             Expr::Literal { .. } => (),
             Expr::Logical { left, right, .. } => {
@@ -167,12 +207,25 @@ impl Resolver {
                 self.resolve_expr(object);
                 self.resolve_expr(value);
             }
+            Expr::This { id, keyword } => self.resolve_this_expr(*id, keyword),
             Expr::Unary { right, .. } => self.resolve_expr(right),
             Expr::Variable { id, name } => self.resolve_var_expr(*id, name),
         }
     }
 
-    fn resolve_function(&mut self, parameters: &Vec<Token>, body: &Vec<Stmt>) {
+    fn resolve_function(&mut self, name: &Token, parameters: &Vec<Token>, body: &Vec<Stmt>) {
+        self.declare(name);
+        self.define(name);
+
+        let enclosing_ftype = self.current_function.clone();
+        self.current_function = FunctionType::Function;
+
+        self.resolve_function_body(parameters, body);
+
+        self.current_function = enclosing_ftype;
+    }
+
+    fn resolve_function_body(&mut self, parameters: &Vec<Token>, body: &Vec<Stmt>) {
         self.begin_scope();
 
         for param in parameters {
@@ -182,6 +235,15 @@ impl Resolver {
 
         self.resolve_stmts(body);
         self.end_scope();
+    }
+
+    fn resolve_this_expr(&mut self, id: usize, keyword: &Token) {
+        if matches!(self.current_class, ClassType::None) {
+            self.errors
+                .push(error("Cannot use 'this' outside of a class.", keyword));
+        }
+
+        self.resolve_local(id, keyword);
     }
 
     fn resolve_var_expr(&mut self, id: usize, name: &Token) {

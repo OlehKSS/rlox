@@ -124,6 +124,10 @@ pub enum Expr {
         object: Box<Expr>,
         value: Box<Expr>,
     },
+    This {
+        id: usize,
+        keyword: Token,
+    },
     Unary {
         right: Box<Expr>,
         operator: Token,
@@ -181,9 +185,14 @@ impl fmt::Display for Expr {
                 let subexpr = parenthesize(&operator.lexeme, &[&left, &right]);
                 write!(f, "{}", subexpr)
             }
-            Expr::Set { name, object, value } => {
+            Expr::Set {
+                name,
+                object,
+                value,
+            } => {
                 write!(f, "{}.{} = {}", object, name.lexeme, value)
             }
+            Expr::This { .. } => write!(f, "this"),
             Expr::Unary { right, operator } => {
                 let subexpr = parenthesize(&operator.lexeme, &[&right]);
                 write!(f, "{}", subexpr)
@@ -537,15 +546,22 @@ impl Parser {
         if self.match_token_type(&[TokenType::Equal]) {
             let equals_pos = self.previous_index();
             let value = self.assignment()?;
-
+            // The parser returns getter for the left-side expression
+            // Convert it to setter, since it is indicated by '='
             if let Expr::Variable { name, .. } = expr {
                 return Result::Ok(Expr::Assign {
                     id: self.get_next_id(),
                     name: name,
                     value: Box::new(value),
                 });
-            } else if let Expr::Set { name, object, value } = expr {
-                return Result::Ok(Expr::Set { name, object, value })
+            }
+
+            if let Expr::Get { name, object } = expr {
+                return Result::Ok(Expr::Set {
+                    name,
+                    object,
+                    value: Box::new(value),
+                });
             }
 
             return Result::Err(error(
@@ -677,9 +693,14 @@ impl Parser {
         loop {
             if self.match_token_type(&[TokenType::LeftParen]) {
                 expr = self.finish_call(&expr)?;
-            } if self.match_token_type(&[TokenType::Dot]) {
-                let name = self.consume(TokenType::Identifier, "Expected property name after '.'.")?;
-                expr = Expr::Get { name: name.clone(), object: Box::new(expr) };
+            }
+            if self.match_token_type(&[TokenType::Dot]) {
+                let name =
+                    self.consume(TokenType::Identifier, "Expected property name after '.'.")?;
+                expr = Expr::Get {
+                    name: name.clone(),
+                    object: Box::new(expr),
+                };
             } else {
                 break;
             }
@@ -735,6 +756,12 @@ impl Parser {
         if self.match_token_type(&[TokenType::Number, TokenType::String]) {
             return Result::Ok(Expr::Literal {
                 value: self.previous().literal.clone(),
+            });
+        }
+        if self.match_token_type(&[TokenType::This]) {
+            return Result::Ok(Expr::This {
+                id: self.get_next_id(),
+                keyword: self.previous().clone(),
             });
         }
         if self.match_token_type(&[TokenType::Identifier]) {

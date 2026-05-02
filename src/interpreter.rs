@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::callable::LoxClass;
+use crate::callable::{LoxClass, LoxInstance};
 
 use super::callable::{Callable, LoxCallable, LoxFunction, NativeFunction};
 use super::environment::Environment;
@@ -215,7 +215,12 @@ impl Interpreter {
         let mut parsed_methods: HashMap<String, LoxFunction> = HashMap::new();
 
         for stmt in methods {
-            if let Stmt::Function { name, parameters, body } = stmt {
+            if let Stmt::Function {
+                name,
+                parameters,
+                body,
+            } = stmt
+            {
                 // TODO: What closure should be here
                 let func = LoxFunction::new(name, parameters, body, self.environment.clone());
                 parsed_methods.insert(name.lexeme.clone(), func);
@@ -252,7 +257,12 @@ impl Interpreter {
                 right,
                 operator,
             } => self.evaluate_logical(left, right, operator),
-            Expr::Set { name, object, value } => self.evaluate_set(name, object, value),
+            Expr::Set {
+                name,
+                object,
+                value,
+            } => self.evaluate_set(name, object, value),
+            Expr::This { id, keyword } => self.look_up_variable(keyword, *id),
             Expr::Unary { right, operator } => self.evaluate_unary(right, operator),
             Expr::Variable { id, name } => self.look_up_variable(name, *id),
         }
@@ -299,7 +309,12 @@ impl Interpreter {
         Result::Ok(right_value)
     }
 
-    fn evaluate_set(&mut self, name: &Token, object: &Expr, value: &Expr) -> Result<LoxValue, String> {
+    fn evaluate_set(
+        &mut self,
+        name: &Token,
+        object: &Expr,
+        value: &Expr,
+    ) -> Result<LoxValue, String> {
         let obj_value = self.evaluate(object)?;
 
         if let LoxValue::Instance(instance) = obj_value {
@@ -444,7 +459,7 @@ impl Interpreter {
         let obj_value = self.evaluate(object)?;
 
         if let LoxValue::Instance(instance) = obj_value {
-            return instance.borrow().get(name);
+            return LoxInstance::get(&instance, name);
         }
 
         Result::Err("Only instances have properties".to_string())

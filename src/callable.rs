@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::environment::Environment;
+use crate::scanner::LiteralType;
 use crate::utility::error;
 
 use super::interpreter::{Interpreter, LoxValue};
@@ -35,8 +36,8 @@ pub struct NativeFunction {
 #[derive(Debug, Clone)]
 pub struct LoxFunction {
     name: Token,
-    parameters: Vec<Token>,
-    body: Vec<Stmt>,
+    parameters: Rc<Vec<Token>>,
+    body: Rc<Vec<Stmt>>,
     closure: Rc<RefCell<Environment>>,
 }
 
@@ -129,10 +130,22 @@ impl LoxFunction {
         // TODO: Can we elimate cloning here?
         LoxFunction {
             name: name.clone(),
-            parameters: parameters.clone(),
-            body: body.clone(),
+            parameters: Rc::new(parameters.clone()),
+            body: Rc::new(body.clone()),
             closure: closure,
         }
+    }
+
+    pub fn bind(&self, instance: Rc<RefCell<LoxInstance>>) -> Rc<LoxFunction> {
+        let env = self.closure.clone();
+        env.borrow_mut()
+            .define("this", &LiteralType::Instance(instance));
+        Rc::new(LoxFunction {
+            name: self.name.clone(),
+            parameters: self.parameters.clone(),
+            body: self.body.clone(),
+            closure: env,
+        })
     }
 }
 
@@ -173,9 +186,10 @@ impl fmt::Display for LoxFunction {
 
 impl LoxClass {
     pub fn new(name: &Token, methods: &HashMap<String, LoxFunction>) -> Self {
-        let methods = methods.iter().map(|(method_name, method)| {
-            (method_name.clone(), Rc::new(method.clone()))
-        }).collect::<HashMap<String, Rc<LoxFunction>>>();
+        let methods = methods
+            .iter()
+            .map(|(method_name, method)| (method_name.clone(), Rc::new(method.clone())))
+            .collect::<HashMap<String, Rc<LoxFunction>>>();
         LoxClass {
             name: name.clone(),
             methods: methods.clone(),
@@ -216,13 +230,17 @@ impl LoxInstance {
         }
     }
 
-    pub fn get(&self, name: &Token) -> Result<LoxValue, String> {
-        if let Option::Some(value) = self.fields.get(&name.lexeme) {
+    pub fn get(instance: &Rc<RefCell<LoxInstance>>, name: &Token) -> Result<LoxValue, String> {
+        let inst_ref = instance.borrow();
+
+        if let Option::Some(value) = inst_ref.fields.get(&name.lexeme) {
             return Result::Ok(value.clone());
         }
 
-        if let Option::Some(method) = self.class.find_method(&name.lexeme) {
-            return Result::Ok(LoxValue::Callable(Callable::Function(method)));
+        if let Option::Some(method) = inst_ref.class.find_method(&name.lexeme) {
+            return Result::Ok(LoxValue::Callable(Callable::Function(
+                method.bind(instance.clone()),
+            )));
         }
 
         Result::Err(error(
