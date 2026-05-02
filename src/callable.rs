@@ -1,7 +1,10 @@
+use core::fmt;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::environment::Environment;
+use crate::utility::error;
 
 use super::interpreter::{Interpreter, LoxValue};
 use super::parser::Stmt;
@@ -14,13 +17,13 @@ pub trait LoxCallable {
         interpreter: &mut Interpreter,
         arguments: &Vec<LoxValue>,
     ) -> Result<LoxValue, String>;
-    fn to_string(&self) -> String;
 }
 
 #[derive(Debug, Clone)]
 pub enum Callable {
     Native(Rc<NativeFunction>),
     Function(Rc<LoxFunction>),
+    Class(Rc<LoxClass>),
 }
 
 #[derive(Debug, Clone)]
@@ -37,11 +40,24 @@ pub struct LoxFunction {
     closure: Rc<RefCell<Environment>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct LoxClass {
+    name: Token,
+    methods: HashMap<String, Rc<LoxFunction>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LoxInstance {
+    class: Rc<LoxClass>,
+    fields: HashMap<String, LoxValue>,
+}
+
 impl LoxCallable for Callable {
     fn arity(&self) -> u8 {
         match self {
             Callable::Native(f) => f.arity(),
             Callable::Function(f) => f.arity(),
+            Callable::Class(c) => c.arity(),
         }
     }
 
@@ -53,13 +69,20 @@ impl LoxCallable for Callable {
         match self {
             Callable::Native(f) => f.call(interpreter, arguments),
             Callable::Function(f) => f.call(interpreter, arguments),
+            Callable::Class(c) => {
+                let instance = LoxInstance::new(c);
+                Result::Ok(LoxValue::Instance(Rc::new(RefCell::new(instance))))
+            }
         }
     }
+}
 
-    fn to_string(&self) -> String {
+impl fmt::Display for Callable {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Callable::Native(f) => f.to_string(),
-            Callable::Function(f) => f.to_string(),
+            Callable::Native(fun) => write!(f, "{}", fun),
+            Callable::Function(fun) => write!(f, "{}", fun),
+            Callable::Class(c) => write!(f, "{}", c),
         }
     }
 }
@@ -88,9 +111,11 @@ impl LoxCallable for NativeFunction {
     ) -> Result<LoxValue, String> {
         (self.func)()
     }
+}
 
-    fn to_string(&self) -> String {
-        "<native fn>".to_string()
+impl fmt::Display for NativeFunction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<native fn>")
     }
 }
 
@@ -138,8 +163,88 @@ impl LoxCallable for LoxFunction {
             Result::Ok(LoxValue::NoneValue)
         }
     }
+}
 
-    fn to_string(&self) -> String {
-        format!("<fn {}>", self.name.lexeme)
+impl fmt::Display for LoxFunction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<fn {}>", self.name.lexeme)
+    }
+}
+
+impl LoxClass {
+    pub fn new(name: &Token, methods: &HashMap<String, LoxFunction>) -> Self {
+        let methods = methods.iter().map(|(method_name, method)| {
+            (method_name.clone(), Rc::new(method.clone()))
+        }).collect::<HashMap<String, Rc<LoxFunction>>>();
+        LoxClass {
+            name: name.clone(),
+            methods: methods.clone(),
+        }
+    }
+
+    pub fn find_method(&self, name: &str) -> Option<Rc<LoxFunction>> {
+        self.methods.get(name).cloned()
+    }
+}
+
+impl LoxCallable for LoxClass {
+    fn arity(&self) -> u8 {
+        0
+    }
+
+    fn call(
+        &self,
+        _interpreter: &mut Interpreter,
+        _arguments: &Vec<LoxValue>,
+    ) -> Result<LoxValue, String> {
+        // Instantiation is handled directly in Callable::call where we have the Rc<LoxClass>
+        unreachable!("LoxClass::call should not be called directly")
+    }
+}
+
+impl fmt::Display for LoxClass {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<class {}>", self.name.lexeme)
+    }
+}
+
+impl LoxInstance {
+    pub fn new(class: &Rc<LoxClass>) -> Self {
+        LoxInstance {
+            class: class.clone(),
+            fields: HashMap::new(),
+        }
+    }
+
+    pub fn get(&self, name: &Token) -> Result<LoxValue, String> {
+        if let Option::Some(value) = self.fields.get(&name.lexeme) {
+            return Result::Ok(value.clone());
+        }
+
+        if let Option::Some(method) = self.class.find_method(&name.lexeme) {
+            return Result::Ok(LoxValue::Callable(Callable::Function(method)));
+        }
+
+        Result::Err(error(
+            &format!("Undefined property '{}'.", name.lexeme),
+            name,
+        ))
+    }
+
+    pub fn set(&mut self, name: &Token, value: &LoxValue) {
+        self.fields.insert(name.lexeme.clone(), value.clone());
+    }
+}
+
+impl fmt::Display for LoxInstance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<instance {}>", self.class)
+    }
+}
+
+impl PartialEq for LoxInstance {
+    fn eq(&self, other: &Self) -> bool {
+        // Compare by reference (pointer equality) since instances are mutable
+        std::ptr::eq(self, other)
     }
 }

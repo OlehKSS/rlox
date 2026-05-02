@@ -4,7 +4,8 @@ use super::scanner::{LiteralType, Token, TokenType};
 use super::utility::error;
 
 /// program      -> declaration* EOF ;
-/// declaration  -> funDecl | varDecl | statement ;
+/// declaration  -> classDecl | funDecl | varDecl | statement ;
+/// classDecl    -> "class" IDENTIFIER "{" function* "}" ;
 /// funDecl      -> "fun" function;
 /// function     -> IDENTIFIER "(" parameters? ")" block ;
 /// parameters   -> IDENTIFIER ( "," IDENTIFIER )* ;
@@ -29,7 +30,7 @@ use super::utility::error;
 /// block        -> "{" declaration* "}" ;
 ///
 /// expression   -> assignment ;
-/// assignment   -> IDENTIFIER "=" assignment | logic_or ;
+/// assignment   -> ( call "." )? IDENTIFIER "=" assignment | logic_or ; // Property setter or variable assignment
 /// logic_or     -> logic_and ( "or" logic_and )* ;
 /// logic_and    -> equality ( "and" equality )* ;
 /// equality     -> comparison ( ( "!=" | "==" ) comparison )* ;
@@ -37,7 +38,7 @@ use super::utility::error;
 /// term         -> factor ( ( "-" | "+" ) factor )* ;
 /// factor       -> unary ( ( "/" | "*" ) unary )* ;
 /// unary        -> ( "!" | "-" ) unary | call ;
-/// call         -> primary ( "(" arguments? ")" )* ;
+/// call         -> primary ( "(" arguments? ")" | "." IDENTIFIER )* ; // Call or property access
 /// arguments    -> expression ( "," expression )* ;
 /// primary      -> NUMBER | STRING | "true" | "false" | "nil" | "(" expression ")" | IDENTIFIER ;
 
@@ -48,6 +49,10 @@ pub enum Stmt {
         statements: Vec<Stmt>,
     },
     Break,
+    Class {
+        name: Token,
+        methods: Vec<Stmt>,
+    },
     Continue,
     Expression {
         expression: Box<Expr>,
@@ -98,6 +103,11 @@ pub enum Expr {
         right_parenthesis: Token,
         arguments: Vec<Expr>,
     },
+    // Class field access
+    Get {
+        name: Token,
+        object: Box<Expr>,
+    },
     Grouping {
         expression: Box<Expr>,
     },
@@ -108,6 +118,11 @@ pub enum Expr {
         left: Box<Expr>,
         right: Box<Expr>,
         operator: Token,
+    },
+    Set {
+        name: Token,
+        object: Box<Expr>,
+        value: Box<Expr>,
     },
     Unary {
         right: Box<Expr>,
@@ -144,6 +159,9 @@ impl fmt::Display for Expr {
 
                 write!(f, "{}({})", callee, args_str)
             }
+            Expr::Get { name, object } => {
+                write!(f, "{}.{}", object, name.lexeme)
+            }
             Expr::Grouping { expression } => {
                 let subexpr = parenthesize("group", &[&expression]);
                 write!(f, "{}", subexpr)
@@ -162,6 +180,9 @@ impl fmt::Display for Expr {
             } => {
                 let subexpr = parenthesize(&operator.lexeme, &[&left, &right]);
                 write!(f, "{}", subexpr)
+            }
+            Expr::Set { name, object, value } => {
+                write!(f, "{}.{} = {}", object, name.lexeme, value)
             }
             Expr::Unary { right, operator } => {
                 let subexpr = parenthesize(&operator.lexeme, &[&right]);
@@ -226,6 +247,9 @@ impl Parser {
     }
 
     fn declaration(&mut self) -> Result<Stmt, String> {
+        if self.match_token_type(&[TokenType::Class]) {
+            return self.class_declaration();
+        }
         if self.match_token_type(&[TokenType::Fun]) {
             return self.function_declaration("function");
         }
@@ -235,6 +259,24 @@ impl Parser {
 
         self.statement()
         // TODO: synchronize() when errors happen
+    }
+
+    fn class_declaration(&mut self) -> Result<Stmt, String> {
+        let name = self
+            .consume(TokenType::Identifier, "Expected class name")?
+            .clone();
+        self.consume(TokenType::LeftBrace, "Expected '{' before class body.")?;
+
+        let mut methods = vec![];
+
+        while !self.check(TokenType::RightBrace) && !self.is_at_end() {
+            let fun = self.function_declaration("method")?;
+            methods.push(fun);
+        }
+
+        self.consume(TokenType::RightBrace, "Expected '}' after class body")?;
+
+        Result::Ok(Stmt::Class { name, methods })
     }
 
     fn function_declaration(&mut self, kind: &str) -> Result<Stmt, String> {
@@ -502,6 +544,8 @@ impl Parser {
                     name: name,
                     value: Box::new(value),
                 });
+            } else if let Expr::Set { name, object, value } = expr {
+                return Result::Ok(Expr::Set { name, object, value })
             }
 
             return Result::Err(error(
@@ -633,6 +677,9 @@ impl Parser {
         loop {
             if self.match_token_type(&[TokenType::LeftParen]) {
                 expr = self.finish_call(&expr)?;
+            } if self.match_token_type(&[TokenType::Dot]) {
+                let name = self.consume(TokenType::Identifier, "Expected property name after '.'.")?;
+                expr = Expr::Get { name: name.clone(), object: Box::new(expr) };
             } else {
                 break;
             }

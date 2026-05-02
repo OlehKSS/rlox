@@ -1,8 +1,9 @@
+use std::cell::RefCell;
 use std::fmt;
-
-use crate::callable::LoxCallable;
+use std::rc::Rc;
 
 use super::callable::Callable;
+use super::callable::LoxInstance;
 
 pub struct Scanner {
     source: String,
@@ -78,6 +79,7 @@ pub enum LiteralType {
     NumberValue(f64),
     BoolValue(bool),
     Callable(Callable),
+    Instance(Rc<RefCell<LoxInstance>>),
     NoneValue,
 }
 
@@ -338,7 +340,10 @@ impl fmt::Display for LiteralType {
                 write!(f, "{}", value)
             }
             LiteralType::Callable(callable) => {
-                write!(f, "{}", callable.to_string())
+                write!(f, "{}", callable)
+            }
+            LiteralType::Instance(instance) => {
+                write!(f, "{}", instance.borrow())
             }
             LiteralType::NoneValue => {
                 write!(f, "")

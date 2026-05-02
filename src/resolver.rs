@@ -63,6 +63,7 @@ impl Resolver {
                 self.end_scope();
             }
             Stmt::Break => (),
+            Stmt::Class { name, methods } => self.resolve_class(name, methods),
             Stmt::Continue => (),
             Stmt::Expression { expression } => self.resolve_expr(expression),
             Stmt::Function {
@@ -115,6 +116,20 @@ impl Resolver {
         }
     }
 
+    fn resolve_class(&mut self, name: &Token, methods: &Vec<Stmt>) {
+        self.declare(name);
+        self.define(name);
+
+        for stmt in methods {
+            if matches!(stmt, Stmt::Function { .. }) {
+                // TODO: Is it enough? Java Lox is different, see p. 192
+                self.resolve_stmt(stmt);
+            } else {
+                panic!("Class declaration can contain only methods.")
+            }
+        }
+    }
+
     fn resolve_if_stmt(
         &mut self,
         condition: &Expr,
@@ -139,11 +154,18 @@ impl Resolver {
             Expr::Call {
                 callee, arguments, ..
             } => self.resolve_call_expr(callee, arguments),
+            Expr::Get { object , ..} => {
+                self.resolve_expr(object)
+            }
             Expr::Grouping { expression } => self.resolve_expr(expression),
             Expr::Literal { .. } => (),
             Expr::Logical { left, right, .. } => {
                 self.resolve_expr(left);
                 self.resolve_expr(right)
+            }
+            Expr::Set { object, value, .. } => {
+                self.resolve_expr(object);
+                self.resolve_expr(value);
             }
             Expr::Unary { right, .. } => self.resolve_expr(right),
             Expr::Variable { id, name } => self.resolve_var_expr(*id, name),
@@ -235,10 +257,10 @@ mod tests {
         let (tokens, _) = scanner.scan_tokens();
         let mut parser = Parser::new(tokens.clone());
         let statements = parser.parse().unwrap();
-        
+
         let resolver = Resolver::new();
         let result = resolver.resolve(&statements);
-        
+
         assert!(result.is_err());
         let errs = result.unwrap_err();
         assert_eq!(errs.len(), 1);
@@ -252,10 +274,10 @@ mod tests {
         let (tokens, _) = scanner.scan_tokens();
         let mut parser = Parser::new(tokens.clone());
         let statements = parser.parse().unwrap();
-        
+
         let resolver = Resolver::new();
         let result = resolver.resolve(&statements);
-        
+
         assert!(result.is_err());
         let errs = result.unwrap_err();
         assert_eq!(errs.len(), 1);
@@ -269,10 +291,10 @@ mod tests {
         let (tokens, _) = scanner.scan_tokens();
         let mut parser = Parser::new(tokens.clone());
         let statements = parser.parse().unwrap();
-        
+
         let resolver = Resolver::new();
         let result = resolver.resolve(&statements);
-        
+
         assert!(result.is_ok()); // Should have no errors because 'b' is used
     }
 }

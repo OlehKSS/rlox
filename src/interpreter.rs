@@ -2,6 +2,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use crate::callable::LoxClass;
+
 use super::callable::{Callable, LoxCallable, LoxFunction, NativeFunction};
 use super::environment::Environment;
 use super::parser::{Expr, Stmt};
@@ -73,6 +75,7 @@ impl Interpreter {
                 self.break_flag = true;
                 Result::Ok(())
             }
+            Stmt::Class { name, methods } => self.execute_class(name, methods),
             Stmt::Continue => {
                 self.continue_flag = true;
                 Result::Ok(())
@@ -203,6 +206,31 @@ impl Interpreter {
         Result::Ok(())
     }
 
+    pub fn execute_class(&mut self, name: &Token, methods: &Vec<Stmt>) -> Result<(), String> {
+        // The Two-stage variable binding process allows references to the class inside its own methods
+        self.environment
+            .borrow_mut()
+            .define(&name.lexeme, &LiteralType::NoneValue);
+
+        let mut parsed_methods: HashMap<String, LoxFunction> = HashMap::new();
+
+        for stmt in methods {
+            if let Stmt::Function { name, parameters, body } = stmt {
+                // TODO: What closure should be here
+                let func = LoxFunction::new(name, parameters, body, self.environment.clone());
+                parsed_methods.insert(name.lexeme.clone(), func);
+            } else {
+                panic!("Expected methods only.");
+            }
+        }
+
+        let class = Callable::Class(Rc::new(LoxClass::new(name, &parsed_methods)));
+        self.environment
+            .borrow_mut()
+            .assign(name, &LoxValue::Callable(class))?;
+        Result::Ok(())
+    }
+
     fn evaluate(&mut self, expr: &Expr) -> Result<LoxValue, String> {
         match expr {
             Expr::Assign { id, name, value } => self.evaluate_assign(*id, name, value),
@@ -216,6 +244,7 @@ impl Interpreter {
                 right_parenthesis,
                 arguments,
             } => self.evaluate_call(callee, right_parenthesis, arguments),
+            Expr::Get { name, object } => self.evaluate_get(name, object),
             Expr::Grouping { expression } => self.evaluate(expression),
             Expr::Literal { value } => Result::Ok(value.clone()),
             Expr::Logical {
@@ -223,6 +252,7 @@ impl Interpreter {
                 right,
                 operator,
             } => self.evaluate_logical(left, right, operator),
+            Expr::Set { name, object, value } => self.evaluate_set(name, object, value),
             Expr::Unary { right, operator } => self.evaluate_unary(right, operator),
             Expr::Variable { id, name } => self.look_up_variable(name, *id),
         }
@@ -267,6 +297,18 @@ impl Interpreter {
 
         let right_value = self.evaluate(right)?;
         Result::Ok(right_value)
+    }
+
+    fn evaluate_set(&mut self, name: &Token, object: &Expr, value: &Expr) -> Result<LoxValue, String> {
+        let obj_value = self.evaluate(object)?;
+
+        if let LoxValue::Instance(instance) = obj_value {
+            let rvalue = self.evaluate(value)?;
+            instance.borrow_mut().set(name, &rvalue);
+            return Result::Ok(rvalue);
+        }
+
+        Result::Err("Only instances have fields.".to_string())
     }
 
     fn evaluate_unary(&mut self, right: &Expr, operator: &Token) -> Result<LoxValue, String> {
@@ -398,6 +440,16 @@ impl Interpreter {
         ))
     }
 
+    fn evaluate_get(&mut self, name: &Token, object: &Expr) -> Result<LiteralType, String> {
+        let obj_value = self.evaluate(object)?;
+
+        if let LoxValue::Instance(instance) = obj_value {
+            return instance.borrow().get(name);
+        }
+
+        Result::Err("Only instances have properties".to_string())
+    }
+
     fn look_up_variable(&self, name: &Token, id: usize) -> Result<LiteralType, String> {
         if let Option::Some(distance) = self.locals.get(&id) {
             self.environment.borrow().get_at(name, *distance)
@@ -437,6 +489,7 @@ fn stringify(lox_value: &LoxValue) -> String {
         LoxValue::BoolValue(value) => value.to_string(),
         LoxValue::StringValue(value) => value.clone(),
         LoxValue::Callable(callable) => callable.to_string(),
+        LoxValue::Instance(instance) => instance.borrow().to_string(),
     }
 }
 
