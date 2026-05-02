@@ -98,6 +98,7 @@ impl Interpreter {
                     parameters,
                     body,
                     self.environment.clone(),
+                    false,
                 )));
                 self.environment
                     .borrow_mut()
@@ -221,8 +222,10 @@ impl Interpreter {
                 body,
             } = stmt
             {
+                let is_init = name.lexeme == "init";
                 // TODO: What closure should be here
-                let func = LoxFunction::new(name, parameters, body, self.environment.clone());
+                let func =
+                    LoxFunction::new(name, parameters, body, self.environment.clone(), is_init);
                 parsed_methods.insert(name.lexeme.clone(), func);
             } else {
                 panic!("Expected methods only.");
@@ -467,7 +470,7 @@ impl Interpreter {
 
     fn look_up_variable(&self, name: &Token, id: usize) -> Result<LiteralType, String> {
         if let Option::Some(distance) = self.locals.get(&id) {
-            self.environment.borrow().get_at(name, *distance)
+            self.environment.borrow().get_at(&name.lexeme, *distance)
         } else {
             self.globals.borrow().get(name)
         }

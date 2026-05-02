@@ -41,18 +41,18 @@ impl Environment {
         Result::Err(format!("Undefined variable '{}'.", token.lexeme))
     }
 
-    pub fn get_at(&self, token: &Token, distance: usize) -> Result<LiteralType, String> {
+    pub fn get_at(&self, name: &str, distance: usize) -> Result<LiteralType, String> {
         let value = if distance == 0 {
-            self.values.get(&token.lexeme).cloned()
+            self.values.get(name).cloned()
         } else {
             let env = self.ancestor(distance)?;
-            env.borrow().values.get(&token.lexeme).cloned()
+            env.borrow().values.get(name).cloned()
         };
 
         if let Option::Some(val) = value {
             return Result::Ok(val);
         } else {
-            return Result::Err(format!("Undefined variable '{}'", token.lexeme));
+            return Result::Err(format!("Undefined variable '{}'", name));
         }
     }
 

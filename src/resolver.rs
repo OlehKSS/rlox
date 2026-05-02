@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::vec;
 
 use super::parser::{Expr, Stmt};
-use super::scanner::Token;
+use super::scanner::{LiteralType, Token};
 use super::utility::error;
 
 struct VariableState {
@@ -21,6 +21,7 @@ enum ClassType {
 enum FunctionType {
     None,
     Function,
+    Initializer,
     Method,
 }
 
@@ -147,11 +148,17 @@ impl Resolver {
 
         for stmt in methods {
             if let Stmt::Function {
-                parameters, body, ..
+                name,
+                parameters,
+                body,
             } = stmt
             {
                 let enclosing_ftype = self.current_function.clone();
-                self.current_function = FunctionType::Method;
+                self.current_function = if name.lexeme == "init" {
+                    FunctionType::Initializer
+                } else {
+                    FunctionType::Method
+                };
                 self.resolve_function_body(parameters, body);
                 self.current_function = enclosing_ftype;
             } else {
@@ -181,6 +188,20 @@ impl Resolver {
         if matches!(self.current_function, FunctionType::None) {
             self.errors
                 .push(error("Cannot return from top-level code.", keyword));
+        }
+
+        if matches!(self.current_function, FunctionType::Initializer) {
+            let is_empty_return = matches!(
+                value,
+                Expr::Literal {
+                    value: LiteralType::NoneValue
+                }
+            );
+
+            if !is_empty_return {
+                self.errors
+                    .push(error("Cannot return a value from an initializer.", keyword));
+            }
         }
 
         self.resolve_expr(value);

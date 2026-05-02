@@ -39,6 +39,7 @@ pub struct LoxFunction {
     parameters: Rc<Vec<Token>>,
     body: Rc<Vec<Stmt>>,
     closure: Rc<RefCell<Environment>>,
+    is_initializer: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -72,7 +73,14 @@ impl LoxCallable for Callable {
             Callable::Function(f) => f.call(interpreter, arguments),
             Callable::Class(c) => {
                 let instance = LoxInstance::new(c);
-                Result::Ok(LoxValue::Instance(Rc::new(RefCell::new(instance))))
+                let instance = Rc::new(RefCell::new(instance));
+                if let Option::Some(initialzer) = c.find_method("init") {
+                    initialzer
+                        .bind(instance.clone())
+                        .call(interpreter, arguments)?;
+                }
+
+                Result::Ok(LoxValue::Instance(instance))
             }
         }
     }
@@ -126,18 +134,21 @@ impl LoxFunction {
         parameters: &Vec<Token>,
         body: &Vec<Stmt>,
         closure: Rc<RefCell<Environment>>,
+        is_initializer: bool,
     ) -> Self {
-        // TODO: Can we elimate cloning here?
         LoxFunction {
             name: name.clone(),
             parameters: Rc::new(parameters.clone()),
             body: Rc::new(body.clone()),
             closure: closure,
+            is_initializer: is_initializer,
         }
     }
 
     pub fn bind(&self, instance: Rc<RefCell<LoxInstance>>) -> Rc<LoxFunction> {
-        let env = self.closure.clone();
+        let env = Rc::new(RefCell::new(Environment::new_with_enclosing(
+            self.closure.clone(),
+        )));
         env.borrow_mut()
             .define("this", &LiteralType::Instance(instance));
         Rc::new(LoxFunction {
@@ -145,6 +156,7 @@ impl LoxFunction {
             parameters: self.parameters.clone(),
             body: self.body.clone(),
             closure: env,
+            is_initializer: self.is_initializer,
         })
     }
 }
@@ -171,10 +183,20 @@ impl LoxCallable for LoxFunction {
             let return_value = interpreter.return_value.clone();
             interpreter.return_flag = false;
             interpreter.return_value = LoxValue::NoneValue;
-            Result::Ok(return_value)
-        } else {
-            Result::Ok(LoxValue::NoneValue)
+
+            if self.is_initializer {
+                return self.closure.borrow_mut().get_at("this", 0);
+            }
+
+            return Result::Ok(return_value);
         }
+
+        // init() methods always return this, even when directly called
+        if self.is_initializer {
+            return self.closure.borrow_mut().get_at("this", 0);
+        }
+
+        Result::Ok(LoxValue::NoneValue)
     }
 }
 
@@ -203,7 +225,11 @@ impl LoxClass {
 
 impl LoxCallable for LoxClass {
     fn arity(&self) -> u8 {
-        0
+        if let Option::Some(initializer) = self.find_method("init") {
+            initializer.arity()
+        } else {
+            0
+        }
     }
 
     fn call(
