@@ -515,6 +515,7 @@ fn stringify(lox_value: &LoxValue) -> String {
 mod tests {
     use super::super::parser::Parser;
     use super::super::scanner::Scanner;
+    use super::super::resolver::Resolver;
     use super::*;
     #[test]
     fn test_evaluate_unary_bool() {
@@ -747,7 +748,7 @@ mod tests {
         let mut parser = Parser::new(tokens.clone());
         let statements = parser.parse().unwrap();
 
-        let resolver = crate::resolver::Resolver::new();
+        let resolver = Resolver::new();
         let locals = resolver.resolve(&statements).unwrap();
 
         let mut intp = Interpreter::new();
@@ -767,7 +768,7 @@ mod tests {
         let (tokens, _) = scanner.scan_tokens();
         let mut parser = Parser::new(tokens.clone());
         let statements = parser.parse().unwrap();
-        let resolver = crate::resolver::Resolver::new();
+        let resolver = Resolver::new();
         let locals = resolver.resolve(&statements).unwrap();
         let mut intp = Interpreter::new();
         intp.resolve(locals);
@@ -785,7 +786,7 @@ mod tests {
         let (tokens, _) = scanner.scan_tokens();
         let mut parser = Parser::new(tokens.clone());
         let statements = parser.parse().unwrap();
-        let resolver = crate::resolver::Resolver::new();
+        let resolver = Resolver::new();
         let locals = resolver.resolve(&statements).unwrap();
         let mut intp = Interpreter::new();
         intp.resolve(locals);
@@ -803,7 +804,7 @@ mod tests {
         let (tokens, _) = scanner.scan_tokens();
         let mut parser = Parser::new(tokens.clone());
         let statements = parser.parse().unwrap();
-        let resolver = crate::resolver::Resolver::new();
+        let resolver = Resolver::new();
         let locals = resolver.resolve(&statements).unwrap();
         let mut intp = Interpreter::new();
         intp.resolve(locals);
@@ -821,7 +822,7 @@ mod tests {
         let (tokens, _) = scanner.scan_tokens();
         let mut parser = Parser::new(tokens.clone());
         let statements = parser.parse().unwrap();
-        let resolver = crate::resolver::Resolver::new();
+        let resolver = Resolver::new();
         let locals = resolver.resolve(&statements).unwrap();
         let mut intp = Interpreter::new();
         intp.resolve(locals);
@@ -839,7 +840,7 @@ mod tests {
         let (tokens, _) = scanner.scan_tokens();
         let mut parser = Parser::new(tokens.clone());
         let statements = parser.parse().unwrap();
-        let resolver = crate::resolver::Resolver::new();
+        let resolver = Resolver::new();
         let locals = resolver.resolve(&statements).unwrap();
         let mut intp = Interpreter::new();
         intp.resolve(locals);
@@ -858,7 +859,7 @@ mod tests {
         let (tokens, _) = scanner.scan_tokens();
         let mut parser = Parser::new(tokens.clone());
         let statements = parser.parse().unwrap();
-        let resolver = crate::resolver::Resolver::new();
+        let resolver = Resolver::new();
         let locals = resolver.resolve(&statements).unwrap();
         let mut intp = Interpreter::new();
         intp.resolve(locals);
@@ -877,7 +878,7 @@ mod tests {
         let (tokens, _) = scanner.scan_tokens();
         let mut parser = Parser::new(tokens.clone());
         let statements = parser.parse().unwrap();
-        let resolver = crate::resolver::Resolver::new();
+        let resolver = Resolver::new();
         let locals = resolver.resolve(&statements).unwrap();
         let mut intp = Interpreter::new();
         intp.resolve(locals);
@@ -896,7 +897,7 @@ mod tests {
         let (tokens, _) = scanner.scan_tokens();
         let mut parser = Parser::new(tokens.clone());
         let statements = parser.parse().unwrap();
-        let resolver = crate::resolver::Resolver::new();
+        let resolver = Resolver::new();
         let locals = resolver.resolve(&statements).unwrap();
         let mut intp = Interpreter::new();
         intp.resolve(locals);
@@ -914,7 +915,7 @@ mod tests {
         let (tokens, _) = scanner.scan_tokens();
         let mut parser = Parser::new(tokens.clone());
         let statements = parser.parse().unwrap();
-        let resolver = crate::resolver::Resolver::new();
+        let resolver = Resolver::new();
         let locals = resolver.resolve(&statements).unwrap();
         let mut intp = Interpreter::new();
         intp.resolve(locals);
@@ -939,7 +940,7 @@ mod tests {
         let (tokens, _) = scanner.scan_tokens();
         let mut parser = Parser::new(tokens.clone());
         let statements = parser.parse().unwrap();
-        let resolver = crate::resolver::Resolver::new();
+        let resolver = Resolver::new();
         let locals = resolver.resolve(&statements).unwrap();
         let mut intp = Interpreter::new();
         intp.resolve(locals);
@@ -964,7 +965,7 @@ mod tests {
         let (tokens, _) = scanner.scan_tokens();
         let mut parser = Parser::new(tokens.clone());
         let statements = parser.parse().unwrap();
-        let resolver = crate::resolver::Resolver::new();
+        let resolver = Resolver::new();
         let locals = resolver.resolve(&statements).unwrap();
         let mut intp = Interpreter::new();
         intp.resolve(locals);
@@ -989,7 +990,7 @@ mod tests {
         let (tokens, _) = scanner.scan_tokens();
         let mut parser = Parser::new(tokens.clone());
         let statements = parser.parse().unwrap();
-        let resolver = crate::resolver::Resolver::new();
+        let resolver = Resolver::new();
         let locals = resolver.resolve(&statements).unwrap();
         let mut intp = Interpreter::new();
         intp.resolve(locals);
@@ -1027,7 +1028,7 @@ mod tests {
         let (tokens, _) = scanner.scan_tokens();
         let mut parser = Parser::new(tokens.clone());
         let statements = parser.parse().unwrap();
-        let resolver = crate::resolver::Resolver::new();
+        let resolver = Resolver::new();
         let locals = resolver.resolve(&statements).unwrap();
         let mut intp = Interpreter::new();
         intp.resolve(locals);
@@ -1075,7 +1076,7 @@ mod tests {
         let (tokens, _) = scanner.scan_tokens();
         let mut parser = Parser::new(tokens.clone());
         let statements = parser.parse().unwrap();
-        let resolver = crate::resolver::Resolver::new();
+        let resolver = Resolver::new();
         let locals = resolver.resolve(&statements).unwrap();
         let mut intp = Interpreter::new();
         intp.resolve(locals);
@@ -1091,5 +1092,46 @@ mod tests {
             intp.environment.borrow().get(&token_result).unwrap(),
             LiteralType::StringValue("updated".to_string())
         );
+    }
+
+    #[test]
+    fn test_class() {
+        let source = r#"
+        class Cake {
+            init() {
+                this.adjective = "delicious";
+                return;
+            }
+
+            taste() {
+                var text = "The " + this.flavor + " cake is " + this.adjective + "!";
+                return text;
+            }
+        }
+
+        var cake = Cake();
+        cake.flavor = "German chocolate";
+        var result = cake.taste();
+        "#;
+
+        let mut scanner = Scanner::new(source);
+        let (tokens, _) = scanner.scan_tokens();
+        let mut parser = Parser::new(tokens.clone());
+        let statements = parser.parse().unwrap();
+        let resolver = Resolver::new();
+        let locals = resolver.resolve(&statements).unwrap();
+        let mut intp = Interpreter::new();
+        intp.resolve(locals);
+        intp.interpret(&statements, false);
+
+        let token_result = Token {
+            ttype: TokenType::Identifier,
+            lexeme: "result".to_string(),
+            literal: LiteralType::NoneValue,
+            line: 1,
+        };
+
+        assert_eq!(intp.environment.borrow().get(&token_result).unwrap(),
+            LiteralType::StringValue("The German chocolate cake is delicious!".to_string()));
     }
 }

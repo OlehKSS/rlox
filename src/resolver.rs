@@ -380,4 +380,47 @@ mod tests {
 
         assert!(result.is_ok()); // Should have no errors because 'b' is used
     }
+
+    #[test]
+    fn test_return_from_code() {
+        let source = r#"
+        var a = 1;
+        return;
+        "#;
+
+        let mut scanner = Scanner::new(source);
+        let (tokens, _) = scanner.scan_tokens();
+        let mut parser = Parser::new(tokens.clone());
+        let statements = parser.parse().unwrap();
+
+        let resolver = Resolver::new();
+        let result = resolver.resolve(&statements);
+        assert!(result.is_err());
+        let errs = result.unwrap_err();
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].contains("Cannot return from top-level code."));
+    }
+
+    #[test]
+    fn test_return_value_from_init() {
+        let source = r#"
+        class Cake {
+            init() {
+                return "delicious";
+            }
+        }
+        "#;
+
+        let mut scanner = Scanner::new(source);
+        let (tokens, _) = scanner.scan_tokens();
+        let mut parser = Parser::new(tokens.clone());
+        let statements = parser.parse().unwrap();
+
+        let resolver = Resolver::new();
+        let result = resolver.resolve(&statements);
+        assert!(result.is_err());
+        let errs = result.unwrap_err();
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].contains("Cannot return a value from an initializer."));
+    }
 }
