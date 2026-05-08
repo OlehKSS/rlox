@@ -5,7 +5,7 @@ use super::utility::error;
 
 /// program      -> declaration* EOF ;
 /// declaration  -> classDecl | funDecl | varDecl | statement ;
-/// classDecl    -> "class" IDENTIFIER "{" function* "}" ;
+/// classDecl    -> "class" IDENTIFIER ( "<" IDENTIFIER )? "{" function* "}" ;
 /// funDecl      -> "fun" function;
 /// function     -> IDENTIFIER "(" parameters? ")" block ;
 /// parameters   -> IDENTIFIER ( "," IDENTIFIER )* ;
@@ -40,7 +40,8 @@ use super::utility::error;
 /// unary        -> ( "!" | "-" ) unary | call ;
 /// call         -> primary ( "(" arguments? ")" | "." IDENTIFIER )* ; // Call or property access
 /// arguments    -> expression ( "," expression )* ;
-/// primary      -> NUMBER | STRING | "true" | "false" | "nil" | "(" expression ")" | IDENTIFIER ;
+/// primary      -> NUMBER | STRING | "true" | "false" | "nil" | "(" expression ")" | IDENTIFIER
+///                 | "super" "." IDENTIFIER ; // super cannot be used on its own, only for method access
 
 /// Statements
 #[derive(Debug, Clone)]
@@ -51,6 +52,7 @@ pub enum Stmt {
     Break,
     Class {
         name: Token,
+        superclass: Option<Box<Expr>>,
         methods: Vec<Stmt>,
     },
     Continue,
@@ -124,6 +126,11 @@ pub enum Expr {
         object: Box<Expr>,
         value: Box<Expr>,
     },
+    Super {
+        id: usize,
+        keyword: Token,
+        method: Token,
+    },
     This {
         id: usize,
         keyword: Token,
@@ -192,6 +199,7 @@ impl fmt::Display for Expr {
             } => {
                 write!(f, "{}.{} = {}", object, name.lexeme, value)
             }
+            Expr::Super { method, .. } => write!(f, "super.{}", method.lexeme),
             Expr::This { .. } => write!(f, "this"),
             Expr::Unary { right, operator } => {
                 let subexpr = parenthesize(&operator.lexeme, &[&right]);
@@ -272,8 +280,19 @@ impl Parser {
 
     fn class_declaration(&mut self) -> Result<Stmt, String> {
         let name = self
-            .consume(TokenType::Identifier, "Expected class name")?
+            .consume(TokenType::Identifier, "Expected class name.")?
             .clone();
+
+        let superclass = if self.match_token_type(&[TokenType::Less]) {
+            self.consume(TokenType::Identifier, "Expected superclass name.")?;
+            Option::Some(Box::new(Expr::Variable {
+                id: self.get_next_id(),
+                name: self.previous().clone(),
+            }))
+        } else {
+            Option::None
+        };
+
         self.consume(TokenType::LeftBrace, "Expected '{' before class body.")?;
 
         let mut methods = vec![];
@@ -285,7 +304,11 @@ impl Parser {
 
         self.consume(TokenType::RightBrace, "Expected '}' after class body")?;
 
-        Result::Ok(Stmt::Class { name, methods })
+        Result::Ok(Stmt::Class {
+            name,
+            superclass,
+            methods,
+        })
     }
 
     fn function_declaration(&mut self, kind: &str) -> Result<Stmt, String> {
@@ -756,6 +779,18 @@ impl Parser {
         if self.match_token_type(&[TokenType::Number, TokenType::String]) {
             return Result::Ok(Expr::Literal {
                 value: self.previous().literal.clone(),
+            });
+        }
+        if self.match_token_type(&[TokenType::Super]) {
+            let keyword = self.previous().clone();
+            self.consume(TokenType::Dot, "Expected '.' after 'super'.")?;
+            let method = self
+                .consume(TokenType::Identifier, "Expected superclass method name.")?
+                .clone();
+            return Result::Ok(Expr::Super {
+                id: self.get_next_id(),
+                keyword,
+                method: method,
             });
         }
         if self.match_token_type(&[TokenType::This]) {

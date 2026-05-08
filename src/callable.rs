@@ -45,6 +45,7 @@ pub struct LoxFunction {
 #[derive(Debug, Clone)]
 pub struct LoxClass {
     name: Token,
+    superclass: Option<Rc<LoxClass>>,
     methods: HashMap<String, Rc<LoxFunction>>,
 }
 
@@ -207,19 +208,32 @@ impl fmt::Display for LoxFunction {
 }
 
 impl LoxClass {
-    pub fn new(name: &Token, methods: &HashMap<String, LoxFunction>) -> Self {
+    pub fn new(
+        name: &Token,
+        superclass: Option<Rc<LoxClass>>,
+        methods: &HashMap<String, LoxFunction>,
+    ) -> Self {
         let methods = methods
             .iter()
             .map(|(method_name, method)| (method_name.clone(), Rc::new(method.clone())))
             .collect::<HashMap<String, Rc<LoxFunction>>>();
         LoxClass {
             name: name.clone(),
+            superclass,
             methods: methods.clone(),
         }
     }
 
     pub fn find_method(&self, name: &str) -> Option<Rc<LoxFunction>> {
-        self.methods.get(name).cloned()
+        if self.methods.contains_key(name) {
+            return self.methods.get(name).cloned();
+        }
+
+        if let Option::Some(superclass) = &self.superclass {
+            return superclass.find_method(name);
+        }
+
+        Option::None
     }
 }
 

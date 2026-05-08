@@ -15,6 +15,7 @@ struct VariableState {
 enum ClassType {
     None,
     Class,
+    Subclass(String),
 }
 
 #[derive(Debug, Clone)]
@@ -81,7 +82,11 @@ impl Resolver {
                 self.end_scope();
             }
             Stmt::Break => (),
-            Stmt::Class { name, methods } => self.resolve_class(name, methods),
+            Stmt::Class {
+                name,
+                superclass,
+                methods,
+            } => self.resolve_class(name, superclass.as_deref(), methods),
             Stmt::Continue => (),
             Stmt::Expression { expression } => self.resolve_expr(expression),
             Stmt::Function {
@@ -130,11 +135,26 @@ impl Resolver {
         }
     }
 
-    fn resolve_class(&mut self, name: &Token, methods: &Vec<Stmt>) {
+    fn resolve_class(&mut self, name: &Token, superclass: Option<&Expr>, methods: &Vec<Stmt>) {
         let enclosing_class = self.current_class.clone();
         self.current_class = ClassType::Class;
         self.declare(name);
         self.define(name);
+
+        if let Option::Some(expr) = superclass {
+            self.current_class = ClassType::Subclass(name.lexeme.clone());
+            self.resolve_expr(expr);
+            // Lexical scope for super
+            self.begin_scope();
+            self.scopes.last_mut().unwrap().insert(
+                "super".to_string(),
+                VariableState {
+                    name: name.clone(),
+                    defined: true,
+                    used: true,
+                },
+            );
+        }
 
         self.begin_scope();
         self.scopes.last_mut().unwrap().insert(
@@ -167,6 +187,10 @@ impl Resolver {
         }
 
         self.end_scope();
+
+        if matches!(superclass, Option::Some(_expr)) {
+            self.end_scope();
+        }
         self.current_class = enclosing_class;
     }
 
@@ -228,6 +252,7 @@ impl Resolver {
                 self.resolve_expr(object);
                 self.resolve_expr(value);
             }
+            Expr::Super { id, keyword, .. } => self.resolve_super_expr(*id, keyword),
             Expr::This { id, keyword } => self.resolve_this_expr(*id, keyword),
             Expr::Unary { right, .. } => self.resolve_expr(right),
             Expr::Variable { id, name } => self.resolve_var_expr(*id, name),
@@ -258,6 +283,22 @@ impl Resolver {
         self.end_scope();
     }
 
+    fn resolve_super_expr(&mut self, id: usize, keyword: &Token) {
+        if matches!(self.current_class, ClassType::None) {
+            self.errors
+                .push(error("Cannot use 'super' outside of a class.", keyword));
+        }
+
+        if !matches!(&self.current_class, ClassType::Subclass(_name)) {
+            self.errors.push(error(
+                "Cannot use 'super' in a class with no superclass.",
+                keyword,
+            ));
+        }
+
+        self.resolve_local(id, keyword);
+    }
+
     fn resolve_this_expr(&mut self, id: usize, keyword: &Token) {
         if matches!(self.current_class, ClassType::None) {
             self.errors
@@ -268,6 +309,12 @@ impl Resolver {
     }
 
     fn resolve_var_expr(&mut self, id: usize, name: &Token) {
+        if let ClassType::Subclass(class_name) = &self.current_class {
+            if *class_name == name.lexeme {
+                self.errors
+                    .push(error("A class cannot inherit from itself.", name));
+            }
+        }
         if let Option::Some(scope) = self.scopes.last_mut() {
             if let Option::Some(state) = scope.get(&name.lexeme) {
                 if !state.defined {
@@ -422,5 +469,60 @@ mod tests {
         let errs = result.unwrap_err();
         assert_eq!(errs.len(), 1);
         assert!(errs[0].contains("Cannot return a value from an initializer."));
+    }
+
+    #[test]
+    fn test_inherit_from_itself() {
+        let source = r#"
+        class Oops < Oops {}
+        "#;
+        let mut scanner = Scanner::new(source);
+        let (tokens, _) = scanner.scan_tokens();
+        let mut parser = Parser::new(tokens.clone());
+        let statements = parser.parse().unwrap();
+
+        let resolver = Resolver::new();
+        let result = resolver.resolve(&statements);
+        assert!(result.is_err());
+        let errs = result.unwrap_err();
+        assert!(errs[0].contains("A class cannot inherit from itself."));
+    }
+
+    #[test]
+    fn test_super_outside_class() {
+        let source = r#"
+        super.notEvenInAClass();
+        "#;
+        let mut scanner = Scanner::new(source);
+        let (tokens, _) = scanner.scan_tokens();
+        let mut parser = Parser::new(tokens.clone());
+        let statements = parser.parse().unwrap();
+
+        let resolver = Resolver::new();
+        let result = resolver.resolve(&statements);
+        assert!(result.is_err());
+        let errs = result.unwrap_err();
+        assert!(errs[0].contains("Cannot use 'super' outside of a class."));
+    }
+
+    #[test]
+    fn test_super_without_superclass() {
+        let source = r#"
+        class Eclair {
+            cook() {
+                super.cook();
+            }
+        }
+        "#;
+        let mut scanner = Scanner::new(source);
+        let (tokens, _) = scanner.scan_tokens();
+        let mut parser = Parser::new(tokens.clone());
+        let statements = parser.parse().unwrap();
+
+        let resolver = Resolver::new();
+        let result = resolver.resolve(&statements);
+        assert!(result.is_err());
+        let errs = result.unwrap_err();
+        assert!(errs[0].contains("Cannot use 'super' in a class with no superclass."));
     }
 }

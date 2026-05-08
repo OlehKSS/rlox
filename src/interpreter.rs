@@ -75,7 +75,11 @@ impl Interpreter {
                 self.break_flag = true;
                 Result::Ok(())
             }
-            Stmt::Class { name, methods } => self.execute_class(name, methods),
+            Stmt::Class {
+                name,
+                superclass,
+                methods,
+            } => self.execute_class(name, superclass.as_deref(), methods),
             Stmt::Continue => {
                 self.continue_flag = true;
                 Result::Ok(())
@@ -207,11 +211,35 @@ impl Interpreter {
         Result::Ok(())
     }
 
-    pub fn execute_class(&mut self, name: &Token, methods: &Vec<Stmt>) -> Result<(), String> {
+    pub fn execute_class(
+        &mut self,
+        name: &Token,
+        superclass: Option<&Expr>,
+        methods: &Vec<Stmt>,
+    ) -> Result<(), String> {
+        let superclass = if let Option::Some(expr) = superclass {
+            let res = self.evaluate(expr)?;
+            if let LoxValue::Callable(Callable::Class(cls)) = res {
+                Option::Some(cls)
+            } else {
+                return Result::Err("Superclass must be a class.".to_string());
+            }
+        } else {
+            Option::None
+        };
         // The Two-stage variable binding process allows references to the class inside its own methods
         self.environment
             .borrow_mut()
             .define(&name.lexeme, &LiteralType::NoneValue);
+
+        if let Option::Some(cls) = &superclass {
+            self.environment = Rc::new(RefCell::new(Environment::new_with_enclosing(
+                self.environment.clone(),
+            )));
+            self.environment
+                .borrow_mut()
+                .define("super", &LoxValue::Callable(Callable::Class(cls.clone())));
+        }
 
         let mut parsed_methods: HashMap<String, LoxFunction> = HashMap::new();
 
@@ -232,7 +260,18 @@ impl Interpreter {
             }
         }
 
-        let class = Callable::Class(Rc::new(LoxClass::new(name, &parsed_methods)));
+        if !matches!(superclass, Option::None) {
+            let enclosing_env = self
+                .environment
+                .borrow()
+                .enclosing
+                .clone()
+                .expect("Expected enclosing environment for super.");
+            self.environment = enclosing_env;
+        }
+
+        let class = Callable::Class(Rc::new(LoxClass::new(name, superclass, &parsed_methods)));
+
         self.environment
             .borrow_mut()
             .assign(name, &LoxValue::Callable(class))?;
@@ -265,6 +304,11 @@ impl Interpreter {
                 object,
                 value,
             } => self.evaluate_set(name, object, value),
+            Expr::Super {
+                id,
+                keyword,
+                method,
+            } => self.evaluate_super(*id, keyword, method),
             Expr::This { id, keyword } => self.look_up_variable(keyword, *id),
             Expr::Unary { right, operator } => self.evaluate_unary(right, operator),
             Expr::Variable { id, name } => self.look_up_variable(name, *id),
@@ -327,6 +371,35 @@ impl Interpreter {
         }
 
         Result::Err("Only instances have fields.".to_string())
+    }
+
+    fn evaluate_super(
+        &mut self,
+        id: usize,
+        name: &Token,
+        method: &Token,
+    ) -> Result<LoxValue, String> {
+        if let Option::Some(distance) = self.locals.get(&id) {
+            let superclass = self.environment.borrow().get_at(&name.lexeme, *distance)?;
+            let object_opt = self.environment.borrow().get_at("this", *distance - 1)?;
+            let method_opt = if let LoxValue::Callable(Callable::Class(cls)) = superclass {
+                cls.find_method(&method.lexeme)
+            } else {
+                return Result::Err("Invalid superclass object.".to_string());
+            };
+
+            if let LoxValue::Instance(object) = object_opt {
+                if let Option::Some(m) = method_opt {
+                    Result::Ok(LoxValue::Callable(Callable::Function(m.bind(object))))
+                } else {
+                    Result::Err(format!("Undefined property '{}'.", method.lexeme))
+                }
+            } else {
+                Result::Err("Invalid 'this' value.".to_string())
+            }
+        } else {
+            Result::Err("Cannot find 'super' in the lexical scope.".to_string())
+        }
     }
 
     fn evaluate_unary(&mut self, right: &Expr, operator: &Token) -> Result<LoxValue, String> {
@@ -514,8 +587,8 @@ fn stringify(lox_value: &LoxValue) -> String {
 #[cfg(test)]
 mod tests {
     use super::super::parser::Parser;
-    use super::super::scanner::Scanner;
     use super::super::resolver::Resolver;
+    use super::super::scanner::Scanner;
     use super::*;
     #[test]
     fn test_evaluate_unary_bool() {
@@ -1131,7 +1204,52 @@ mod tests {
             line: 1,
         };
 
-        assert_eq!(intp.environment.borrow().get(&token_result).unwrap(),
-            LiteralType::StringValue("The German chocolate cake is delicious!".to_string()));
+        assert_eq!(
+            intp.environment.borrow().get(&token_result).unwrap(),
+            LiteralType::StringValue("The German chocolate cake is delicious!".to_string())
+        );
+    }
+
+    #[test]
+    fn test_class_inheritance() {
+        let source = r#"
+        class Doughnut {
+            cook() {
+                return "Fry until golden brown.";
+            }
+        }
+
+        class BostonCream < Doughnut {
+            cook() {
+                return super.cook() + " Pipe full of custard and coat with chocolate.";
+            }
+        }
+
+        var result = BostonCream().cook();
+        "#;
+
+        let mut scanner = Scanner::new(source);
+        let (tokens, _) = scanner.scan_tokens();
+        let mut parser = Parser::new(tokens.clone());
+        let statements = parser.parse().unwrap();
+        let resolver = Resolver::new();
+        let locals = resolver.resolve(&statements).unwrap();
+        let mut intp = Interpreter::new();
+        intp.resolve(locals);
+        intp.interpret(&statements, false);
+
+        let token_result = Token {
+            ttype: TokenType::Identifier,
+            lexeme: "result".to_string(),
+            literal: LiteralType::NoneValue,
+            line: 1,
+        };
+
+        assert_eq!(
+            intp.environment.borrow().get(&token_result).unwrap(),
+            LiteralType::StringValue(
+                "Fry until golden brown. Pipe full of custard and coat with chocolate.".to_string()
+            )
+        );
     }
 }

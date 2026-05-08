@@ -7,7 +7,7 @@ use super::scanner::{LiteralType, Token};
 #[derive(Debug)]
 pub struct Environment {
     values: HashMap<String, LiteralType>,
-    enclosing: Option<Rc<RefCell<Environment>>>,
+    pub enclosing: Option<Rc<RefCell<Environment>>>,
 }
 
 impl Environment {
