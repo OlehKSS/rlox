@@ -86,7 +86,8 @@ impl Resolver {
                 name,
                 superclass,
                 methods,
-            } => self.resolve_class(name, superclass.as_deref(), methods),
+                static_methods,
+            } => self.resolve_class(name, superclass.as_deref(), methods, static_methods),
             Stmt::Continue => (),
             Stmt::Expression { expression } => self.resolve_expr(expression),
             Stmt::Function {
@@ -135,7 +136,13 @@ impl Resolver {
         }
     }
 
-    fn resolve_class(&mut self, name: &Token, superclass: Option<&Expr>, methods: &Vec<Stmt>) {
+    fn resolve_class(
+        &mut self,
+        name: &Token,
+        superclass: Option<&Expr>,
+        methods: &Vec<Stmt>,
+        static_methods: &Vec<Stmt>,
+    ) {
         let enclosing_class = self.current_class.clone();
         self.current_class = ClassType::Class;
         self.declare(name);
@@ -154,6 +161,20 @@ impl Resolver {
                     used: true,
                 },
             );
+        }
+
+        for stmt in static_methods {
+            if let Stmt::Function {
+                parameters, body, ..
+            } = stmt
+            {
+                let enclosing_ftype = self.current_function.clone();
+                self.current_function = FunctionType::Function;
+                self.resolve_function_body(parameters, body);
+                self.current_function = enclosing_ftype;
+            } else {
+                panic!("Class declaration can contain only methods.");
+            }
         }
 
         self.begin_scope();
@@ -182,7 +203,7 @@ impl Resolver {
                 self.resolve_function_body(parameters, body);
                 self.current_function = enclosing_ftype;
             } else {
-                panic!("Class declaration can contain only methods.")
+                panic!("Class declaration can contain only methods.");
             }
         }
 

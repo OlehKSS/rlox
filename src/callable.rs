@@ -47,6 +47,7 @@ pub struct LoxClass {
     name: Token,
     superclass: Option<Rc<LoxClass>>,
     methods: HashMap<String, Rc<LoxFunction>>,
+    static_methods: HashMap<String, Rc<LoxFunction>>,
 }
 
 #[derive(Debug, Clone)]
@@ -212,8 +213,13 @@ impl LoxClass {
         name: &Token,
         superclass: Option<Rc<LoxClass>>,
         methods: &HashMap<String, LoxFunction>,
+        static_methods: &HashMap<String, LoxFunction>,
     ) -> Self {
         let methods = methods
+            .iter()
+            .map(|(method_name, method)| (method_name.clone(), Rc::new(method.clone())))
+            .collect::<HashMap<String, Rc<LoxFunction>>>();
+        let static_methods = static_methods
             .iter()
             .map(|(method_name, method)| (method_name.clone(), Rc::new(method.clone())))
             .collect::<HashMap<String, Rc<LoxFunction>>>();
@@ -221,6 +227,7 @@ impl LoxClass {
             name: name.clone(),
             superclass,
             methods: methods.clone(),
+            static_methods: static_methods.clone(),
         }
     }
 
@@ -234,6 +241,17 @@ impl LoxClass {
         }
 
         Option::None
+    }
+
+    pub fn get(&self, name: &Token) -> Result<LoxValue, String> {
+        if let Option::Some(method) = self.static_methods.get(&name.lexeme) {
+            return Result::Ok(LoxValue::Callable(Callable::Function(method.clone())));
+        }
+
+        Result::Err(error(
+            &format!("Undefined property '{}'.", name.lexeme),
+            name,
+        ))
     }
 }
 

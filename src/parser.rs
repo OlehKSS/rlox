@@ -5,7 +5,7 @@ use super::utility::error;
 
 /// program      -> declaration* EOF ;
 /// declaration  -> classDecl | funDecl | varDecl | statement ;
-/// classDecl    -> "class" IDENTIFIER ( "<" IDENTIFIER )? "{" function* "}" ;
+/// classDecl    -> "class" IDENTIFIER ( "<" IDENTIFIER )? "{" ( "static" )? function* "}" ;
 /// funDecl      -> "fun" function;
 /// function     -> IDENTIFIER "(" parameters? ")" block ;
 /// parameters   -> IDENTIFIER ( "," IDENTIFIER )* ;
@@ -54,6 +54,7 @@ pub enum Stmt {
         name: Token,
         superclass: Option<Box<Expr>>,
         methods: Vec<Stmt>,
+        static_methods: Vec<Stmt>,
     },
     Continue,
     Expression {
@@ -296,10 +297,17 @@ impl Parser {
         self.consume(TokenType::LeftBrace, "Expected '{' before class body.")?;
 
         let mut methods = vec![];
+        let mut static_methods = vec![];
 
         while !self.check(TokenType::RightBrace) && !self.is_at_end() {
-            let fun = self.function_declaration("method")?;
-            methods.push(fun);
+            if self.check(TokenType::Static) {
+                self.advance();
+                let fun = self.function_declaration("method")?;
+                static_methods.push(fun);
+            } else {
+                let fun = self.function_declaration("method")?;
+                methods.push(fun);
+            }
         }
 
         self.consume(TokenType::RightBrace, "Expected '}' after class body")?;
@@ -308,6 +316,7 @@ impl Parser {
             name,
             superclass,
             methods,
+            static_methods,
         })
     }
 

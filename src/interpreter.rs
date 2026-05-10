@@ -79,7 +79,8 @@ impl Interpreter {
                 name,
                 superclass,
                 methods,
-            } => self.execute_class(name, superclass.as_deref(), methods),
+                static_methods,
+            } => self.execute_class(name, superclass.as_deref(), methods, static_methods),
             Stmt::Continue => {
                 self.continue_flag = true;
                 Result::Ok(())
@@ -216,6 +217,7 @@ impl Interpreter {
         name: &Token,
         superclass: Option<&Expr>,
         methods: &Vec<Stmt>,
+        static_methods: &Vec<Stmt>,
     ) -> Result<(), String> {
         let superclass = if let Option::Some(expr) = superclass {
             let res = self.evaluate(expr)?;
@@ -242,6 +244,7 @@ impl Interpreter {
         }
 
         let mut parsed_methods: HashMap<String, LoxFunction> = HashMap::new();
+        let mut parsed_static_methods: HashMap<String, LoxFunction> = HashMap::new();
 
         for stmt in methods {
             if let Stmt::Function {
@@ -260,6 +263,21 @@ impl Interpreter {
             }
         }
 
+        for stmt in static_methods {
+            if let Stmt::Function {
+                name,
+                parameters,
+                body,
+            } = stmt
+            {
+                let func =
+                    LoxFunction::new(name, parameters, body, self.environment.clone(), false);
+                parsed_static_methods.insert(name.lexeme.clone(), func);
+            } else {
+                panic!("Expected static methods only.");
+            }
+        }
+
         if !matches!(superclass, Option::None) {
             let enclosing_env = self
                 .environment
@@ -270,7 +288,12 @@ impl Interpreter {
             self.environment = enclosing_env;
         }
 
-        let class = Callable::Class(Rc::new(LoxClass::new(name, superclass, &parsed_methods)));
+        let class = Callable::Class(Rc::new(LoxClass::new(
+            name,
+            superclass,
+            &parsed_methods,
+            &parsed_static_methods,
+        )));
 
         self.environment
             .borrow_mut()
@@ -536,6 +559,10 @@ impl Interpreter {
 
         if let LoxValue::Instance(instance) = obj_value {
             return LoxInstance::get(&instance, name);
+        }
+
+        if let LoxValue::Callable(Callable::Class(cls)) = obj_value {
+            return cls.get(name);
         }
 
         Result::Err("Only instances have properties".to_string())
@@ -1207,6 +1234,40 @@ mod tests {
         assert_eq!(
             intp.environment.borrow().get(&token_result).unwrap(),
             LiteralType::StringValue("The German chocolate cake is delicious!".to_string())
+        );
+    }
+
+    #[test]
+    fn test_static_methods() {
+        let source = r#"
+        class Doughnut {
+            static cook() {
+                return "Fry until golden brown.";
+            }
+        }
+        var result = Doughnut.cook();
+        "#;
+
+        let mut scanner = Scanner::new(source);
+        let (tokens, _) = scanner.scan_tokens();
+        let mut parser = Parser::new(tokens.clone());
+        let statements = parser.parse().unwrap();
+        let resolver = Resolver::new();
+        let locals = resolver.resolve(&statements).unwrap();
+        let mut intp = Interpreter::new();
+        intp.resolve(locals);
+        intp.interpret(&statements, false);
+
+        let token_result = Token {
+            ttype: TokenType::Identifier,
+            lexeme: "result".to_string(),
+            literal: LiteralType::NoneValue,
+            line: 1,
+        };
+
+        assert_eq!(
+            intp.environment.borrow().get(&token_result).unwrap(),
+            LiteralType::StringValue("Fry until golden brown.".to_string())
         );
     }
 
