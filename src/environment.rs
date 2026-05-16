@@ -1,4 +1,3 @@
-use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -6,31 +5,35 @@ use super::scanner::{LiteralType, Token};
 
 #[derive(Debug)]
 pub struct Environment {
-    values: FxHashMap<String, LiteralType>,
+    values: Vec<(String, LiteralType)>,
     pub enclosing: Option<Rc<RefCell<Environment>>>,
 }
 
 impl Environment {
     pub fn new() -> Self {
         Environment {
-            values: FxHashMap::default(),
+            values: Vec::new(),
             enclosing: Option::None,
         }
     }
 
     pub fn new_with_enclosing(enclosing: Rc<RefCell<Environment>>) -> Self {
         Environment {
-            values: FxHashMap::default(),
+            values: Vec::new(),
             enclosing: Option::Some(enclosing),
         }
     }
 
     pub fn define(&mut self, name: &str, value: &LiteralType) {
-        self.values.insert(name.to_string(), value.clone());
+        if let Some(pos) = self.values.iter().position(|(k, _)| k == name) {
+            self.values[pos].1 = value.clone();
+        } else {
+            self.values.push((name.to_string(), value.clone()));
+        }
     }
 
     pub fn get(&self, token: &Token) -> Result<LiteralType, String> {
-        if let Option::Some(value) = self.values.get(&token.lexeme) {
+        if let Some((_, value)) = self.values.iter().find(|(k, _)| k == &token.lexeme) {
             return Result::Ok(value.clone());
         }
 
@@ -42,23 +45,23 @@ impl Environment {
     }
 
     pub fn get_at(&self, name: &str, distance: usize) -> Result<LiteralType, String> {
-        let value = if distance == 0 {
-            self.values.get(name).cloned()
+        if distance == 0 {
+            if let Some((_, value)) = self.values.iter().find(|(k, _)| k == name) {
+                return Result::Ok(value.clone());
+            }
         } else {
             let env = self.ancestor(distance)?;
-            env.borrow().values.get(name).cloned()
-        };
-
-        if let Option::Some(val) = value {
-            return Result::Ok(val);
-        } else {
-            return Result::Err(format!("Undefined variable '{}'", name));
+            if let Some((_, value)) = &env.borrow().values.iter().find(|(k, _)| k == name) {
+                return Result::Ok(value.clone());
+            }
         }
+
+        return Result::Err(format!("Undefined variable '{}'", name));
     }
 
     pub fn assign(&mut self, name: &Token, value: &LiteralType) -> Result<(), String> {
-        if self.values.contains_key(&name.lexeme) {
-            self.values.insert(name.lexeme.clone(), value.clone());
+        if let Some(pos) = self.values.iter().position(|(k, _)| k == &name.lexeme) {
+            self.values[pos].1 = value.clone();
             return Result::Ok(());
         }
 
@@ -76,15 +79,25 @@ impl Environment {
         distance: usize,
     ) -> Result<(), String> {
         if distance == 0 {
-            self.values.insert(name.lexeme.clone(), value.clone());
+            if let Some(pos) = self.values.iter().position(|(k, _)| k == &name.lexeme) {
+                self.values[pos].1 = value.clone();
+                return Result::Ok(());
+            }
         } else {
             let env = self.ancestor(distance)?;
-            env.borrow_mut()
+            if let Some(pos) = env
+                .borrow()
                 .values
-                .insert(name.lexeme.clone(), value.clone());
+                .iter()
+                .position(|(k, _)| k == &name.lexeme)
+            {
+                env.borrow_mut().values[pos].1 = value.clone();
+                return Result::Ok(());
+            }
         }
-
-        Result::Ok(())
+        // Technically redundant
+        // Resolver pass has already definitively proven that the variable exists at that exact lexical scope
+        Result::Err(format!("Undefined variable '{}'.", name.lexeme))
     }
 
     fn ancestor(&self, distance: usize) -> Result<Rc<RefCell<Environment>>, String> {
