@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::vec;
 
 use super::parser::{Expr, Stmt};
@@ -28,8 +28,8 @@ enum FunctionType {
 
 // Semantic analysis pass
 pub struct Resolver {
-    scopes: Vec<HashMap<String, VariableState>>,
-    locals: HashMap<usize, usize>,
+    scopes: Vec<FxHashMap<String, VariableState>>,
+    locals: FxHashMap<usize, usize>,
     errors: Vec<String>,
     current_class: ClassType,
     current_function: FunctionType,
@@ -39,14 +39,17 @@ impl Resolver {
     pub fn new() -> Self {
         Resolver {
             scopes: vec![],
-            locals: HashMap::new(),
+            locals: FxHashMap::default(),
             errors: vec![],
             current_class: ClassType::None,
             current_function: FunctionType::None,
         }
     }
 
-    pub fn resolve(mut self, statements: &Vec<Stmt>) -> Result<HashMap<usize, usize>, Vec<String>> {
+    pub fn resolve(
+        mut self,
+        statements: &Vec<Stmt>,
+    ) -> Result<FxHashMap<usize, usize>, Vec<String>> {
         self.resolve_stmts(statements);
 
         if self.errors.is_empty() {
@@ -58,7 +61,7 @@ impl Resolver {
     }
 
     fn begin_scope(&mut self) {
-        self.scopes.push(HashMap::new());
+        self.scopes.push(FxHashMap::default());
     }
 
     fn end_scope(&mut self) {

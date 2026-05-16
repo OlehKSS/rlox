@@ -1,6 +1,6 @@
 use core::fmt;
+use rustc_hash::FxHashMap;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::environment::Environment;
@@ -46,14 +46,14 @@ pub struct LoxFunction {
 pub struct LoxClass {
     name: Token,
     superclass: Option<Rc<LoxClass>>,
-    methods: HashMap<String, Rc<LoxFunction>>,
-    static_methods: HashMap<String, Rc<LoxFunction>>,
+    methods: FxHashMap<String, Rc<LoxFunction>>,
+    static_methods: FxHashMap<String, Rc<LoxFunction>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct LoxInstance {
     class: Rc<LoxClass>,
-    fields: HashMap<String, LoxValue>,
+    fields: FxHashMap<String, LoxValue>,
 }
 
 impl LoxCallable for Callable {
@@ -212,17 +212,17 @@ impl LoxClass {
     pub fn new(
         name: &Token,
         superclass: Option<Rc<LoxClass>>,
-        methods: &HashMap<String, LoxFunction>,
-        static_methods: &HashMap<String, LoxFunction>,
+        methods: &FxHashMap<String, LoxFunction>,
+        static_methods: &FxHashMap<String, LoxFunction>,
     ) -> Self {
         let methods = methods
             .iter()
             .map(|(method_name, method)| (method_name.clone(), Rc::new(method.clone())))
-            .collect::<HashMap<String, Rc<LoxFunction>>>();
+            .collect::<FxHashMap<String, Rc<LoxFunction>>>();
         let static_methods = static_methods
             .iter()
             .map(|(method_name, method)| (method_name.clone(), Rc::new(method.clone())))
-            .collect::<HashMap<String, Rc<LoxFunction>>>();
+            .collect::<FxHashMap<String, Rc<LoxFunction>>>();
         LoxClass {
             name: name.clone(),
             superclass,
@@ -284,7 +284,7 @@ impl LoxInstance {
     pub fn new(class: &Rc<LoxClass>) -> Self {
         LoxInstance {
             class: class.clone(),
-            fields: HashMap::new(),
+            fields: FxHashMap::default(),
         }
     }
 

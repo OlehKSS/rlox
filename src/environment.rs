@@ -1,26 +1,26 @@
+use rustc_hash::FxHashMap;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use super::scanner::{LiteralType, Token};
 
 #[derive(Debug)]
 pub struct Environment {
-    values: HashMap<String, LiteralType>,
+    values: FxHashMap<String, LiteralType>,
     pub enclosing: Option<Rc<RefCell<Environment>>>,
 }
 
 impl Environment {
     pub fn new() -> Self {
         Environment {
-            values: HashMap::new(),
+            values: FxHashMap::default(),
             enclosing: Option::None,
         }
     }
 
     pub fn new_with_enclosing(enclosing: Rc<RefCell<Environment>>) -> Self {
         Environment {
-            values: HashMap::new(),
+            values: FxHashMap::default(),
             enclosing: Option::Some(enclosing),
         }
     }

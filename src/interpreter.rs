@@ -1,5 +1,5 @@
+use rustc_hash::FxHashMap;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::callable::{LoxClass, LoxInstance};
@@ -21,7 +21,7 @@ pub struct Interpreter {
     environment: Rc<RefCell<Environment>>,
     break_flag: bool,
     continue_flag: bool,
-    locals: HashMap<usize, usize>, // Map Expr.id to its depth
+    locals: FxHashMap<usize, usize>, // Map Expr.id to its depth
 }
 
 impl Interpreter {
@@ -45,7 +45,7 @@ impl Interpreter {
             continue_flag: false,
             return_flag: false,
             return_value: LiteralType::NoneValue,
-            locals: HashMap::new(),
+            locals: FxHashMap::default(),
         }
     }
 
@@ -59,7 +59,7 @@ impl Interpreter {
         }
     }
 
-    pub fn resolve(&mut self, locals: HashMap<usize, usize>) {
+    pub fn resolve(&mut self, locals: FxHashMap<usize, usize>) {
         self.locals = locals;
     }
 
@@ -243,8 +243,8 @@ impl Interpreter {
                 .define("super", &LoxValue::Callable(Callable::Class(cls.clone())));
         }
 
-        let mut parsed_methods: HashMap<String, LoxFunction> = HashMap::new();
-        let mut parsed_static_methods: HashMap<String, LoxFunction> = HashMap::new();
+        let mut parsed_methods: FxHashMap<String, LoxFunction> = FxHashMap::default();
+        let mut parsed_static_methods: FxHashMap<String, LoxFunction> = FxHashMap::default();
 
         for stmt in methods {
             if let Stmt::Function {
